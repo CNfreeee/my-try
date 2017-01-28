@@ -15,14 +15,7 @@ static struct msghdr msgsend, msgrecv;		//同一时间不存在多个线程操�
 static struct iovec iovsend[3], iovrecv[2];
 static char name[namelen+2];				//本地登录名
 static string string_name;
-void getlocalip();
-void update_map(ssize_t);
-int parseInput(char *, char *, size_t, char*);		//参数分别是键盘输入，存放解析后命令的buf，buf的大小
-void parseRecv(ssize_t);
-void inform_server();
-void do_send(char*, size_t, char*, size_t);
-void req2serv(char*, size_t, char*, size_t);
-void chat2all(char*, size_t, char*, size_t);
+
 int main(int argc, char **argv)
 {
 	if(argc != 2)
@@ -39,7 +32,7 @@ int main(int argc, char **argv)
 		err_sys("inet_pton error");
 	
 	msgsend.msg_iov = iovsend;
-	msgsend.msg_iovlen = 2;
+	msgsend.msg_iovlen = 3;
 	
 	localaddr.sin_addr.s_addr = htonl(INADDR_ANY);		//绑定udp套接字
 	localaddr.sin_family = AF_INET;
@@ -158,11 +151,62 @@ void do_send(char* control, size_t len1, char* mes, size_t len2)
 	else if(strcmp(control,"chatall") == 0){
 		chat2all(control, len1, mes, len2);
 	}
+	else if(strcmp(control,"chat") == 0){
+		chat2one(control, len1, mes, len2);
+	}
+	else if(strcmp(control,"show") == 0){
+		show_users();
+	}
 	else
 		printf("unknown control message\n");
 
 
 }
+
+void chat2one(char* control, size_t len1, char* mes, size_t len2)
+{
+	char *pos = NULL;
+	if((pos = strchr(mes,' ')) == NULL){
+		printf("unknown control message\n");	
+		return;
+	}	
+	int onlinenums = usermap.size();
+	ssize_t n = 0;
+	if(onlinenums == 0){
+		printf("none is online\n");
+		return;
+	}
+	char peername[12] = {0};
+	memcpy(peername,mes,pos-mes);
+	struct sockaddr_in peeraddr;
+	struct sockaddr_in alteraddr;
+	msgsend.msg_namelen = sizeof(peeraddr);	
+	iovsend[0].iov_base = control;
+	iovsend[0].iov_len = len1;
+	iovsend[1].iov_base = name;
+	iovsend[1].iov_len = namelen;
+	iovsend[2].iov_base = pos+1;
+	iovsend[2].iov_len = len2-(pos+1-mes);
+	string sname(peername);
+	map<string,struct user>::iterator it = usermap.find(sname);
+	if(it == usermap.end()){
+		printf("not such user\n");
+		return;
+	}
+	peeraddr = it->second.addr;
+	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
+		alteraddr = it->second.inner_addr;
+		msgsend.msg_name = (struct sockaddr*)&alteraddr;
+	}
+	else{
+		msgsend.msg_name = (struct sockaddr*)&peeraddr;	
+	}
+	if( (n = sendmsg(sockfd, &msgsend, 0)) < 0)
+		err_sys("sendmsg to server error");
+	return;
+}
+
+
 
 void chat2all(char* control, size_t len1, char* mes, size_t len2)
 {	
@@ -177,8 +221,10 @@ void chat2all(char* control, size_t len1, char* mes, size_t len2)
 	msgsend.msg_namelen = sizeof(peeraddr);	
 	iovsend[0].iov_base = control;
 	iovsend[0].iov_len = len1;
-	iovsend[1].iov_base = mes;
-	iovsend[1].iov_len = len2;
+	iovsend[1].iov_base = name;
+	iovsend[1].iov_len = namelen;
+	iovsend[2].iov_base = mes;
+	iovsend[2].iov_len = len2;
 	
 	map<string,struct user>::iterator it;
 	for(it = usermap.begin(); it != usermap.end(); ++it){	
@@ -201,6 +247,24 @@ void chat2all(char* control, size_t len1, char* mes, size_t len2)
 	}	
 }
 
+void show_users()
+{
+	int onlinenums = usermap.size();
+	ssize_t n = 0;
+	if(onlinenums == 0){
+		printf("none is online\n");
+		return;
+	}
+	map<string,struct user>::iterator it;
+	printf("existing users are: ");
+	for(it = usermap.begin(); it!=usermap.end(); ++it){
+		printf("%s, ",it->second.name);
+	}
+	printf("\n");
+
+}
+
+
 
 void req2serv(char* control, size_t len1, char* mes, size_t len2)
 {
@@ -212,7 +276,7 @@ void req2serv(char* control, size_t len1, char* mes, size_t len2)
 	iovsend[1].iov_base = mes;
 	iovsend[1].iov_len = len2;
 	if(strcmp(control, "login") == 0){		//要发送本地内网地址
-		msgsend.msg_iovlen = 3;
+	//	msgsend.msg_iovlen = 3;
 		getlocalip();
 		printf("local ip is %s:%d\n", inet_ntoa(localaddr.sin_addr),ntohs(localaddr.sin_port));
 //		localaddr.sin_addr.s_addr = htonl(localaddr.sin_addr.s_addr);		//转成网络字节序
@@ -224,7 +288,7 @@ void req2serv(char* control, size_t len1, char* mes, size_t len2)
 	printf("sizeof struct user is %lu\n", sizeof(struct user));
 	printf("sizeof sturct sockaddr_in is %lu\n", sizeof(struct sockaddr_in));
 	printf("first send %lu bytes\n",n);
-	msgsend.msg_iovlen = 2;
+//	msgsend.msg_iovlen = 2;
 }
 
 
@@ -232,7 +296,7 @@ void req2serv(char* control, size_t len1, char* mes, size_t len2)
 //解析键盘输入,-1表示控制字段不正确，0表示正确
 int parseInput(char *input, char control[], size_t control_size, char *rest_input)
 {
-	char *pos;
+	char *pos = NULL;
 	int i;
 	if((pos = strchr(input,' ')) != NULL){	
 		if((pos-input) > (control_size - 1))
@@ -260,8 +324,10 @@ void parseRecv(ssize_t n)
 	if(strcmp((char*)iovrecv[0].iov_base,"login") == 0 || strcmp((char*)iovrecv[0].iov_base,"update") == 0){
 		update_map(n);
 	}
-	else if(strcmp((char*)iovrecv[0].iov_base,"chatall") == 0 || strcmp((char*)iovrecv[0].iov_base,"chat") == 0){
-		printf("%s\n",(char*)iovrecv[1].iov_base);
+	else if(strcmp((char*)iovrecv[0].iov_base,"chatall") == 0 || strcmp((char*)iovrecv[0].iov_base,"chat") == 0){	//iovrecv[1]的前12个字节是发送端的名字
+		char fromwho[namelen];
+		memcpy(fromwho,iovrecv[1].iov_base,12);
+		printf("%s:%s\n",fromwho,(char*)(iovrecv[1].iov_base+12));
 	}
 	else if(strcmp((char*)iovrecv[0].iov_base,"try") == 0){
 		printf("unexpected try control\n");		
