@@ -20,15 +20,31 @@ int main(int argc, char **argv)
 {
 	char control[commandlen] = {0};				//存放控制信息
 	char recvline[MAXLINE];
+	char input[UDPMAXLINE];		//UDPMAXLINE是576-8-20=548个字节，其实这里再加1也是可以的，因为不会把'\0'发出
+	char rest_input[UDPMAXLINE-sizeof(control)];
+	int m, nfds;
+	ssize_t n;
+	struct sigaction SIGALRM_act, SIGINT_act;
+	SIGALRM_act.sa_handler = alarm_handler;
+	SIGINT_act.sa_handler = interrupt_handler;
+	sigemptyset(&SIGALRM_act.sa_mask);
+	sigemptyset(&SIGINT_act.sa_mask);
+	SIGALRM_act.sa_flags = 0;
+	SIGINT_act.sa_flags = 0;
+	SIGALRM_act.sa_flags |= SA_RESTART;
+	SIGINT_act.sa_flags |= SA_RESTART;
+	if(sigaction(SIGALRM, &SIGALRM_act, NULL) < 0)
+		err_sys("sigaction error\n");
+	if(sigaction(SIGINT, &SIGINT_act, NULL) < 0)
+		err_sys("sigaction error\n");
+	servaddr.sin_family      = AF_INET;
+	servaddr.sin_port        = htons(PORT-1);
 	if(argc != 2)
 		err_sys("invalid arg");
 	
 	if( (sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 		err_sys("socket error");
 	printf("sockfd is %d\n",sockfd);
-	//bzero(&servaddr, sizeof(servaddr));
-	servaddr.sin_family      = AF_INET;
-	servaddr.sin_port        = htons(PORT-1);
 
 	if(inet_pton(AF_INET, argv[1], &servaddr.sin_addr) <= 0)
 		err_sys("inet_pton error");
@@ -36,18 +52,7 @@ int main(int argc, char **argv)
 	msgsend.msg_iov = iovsend;
 	msgsend.msg_iovlen = 3;
 
-	if(sendto(sockfd, control, commandlen, 0, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
-		err_sys("sendto failed\n");
-	socklen_t len = sizeof(localaddr);
-	if(getsockname(sockfd, (struct sockaddr*)&localaddr, &len) < 0)
-		err_sys("getsockname failed");
-	char addr[16] = {0};
-	inet_ntop(AF_INET, &localaddr.sin_addr, addr, 16);
-	printf("local port is %s:%hu\n",addr,ntohs(localaddr.sin_port));
-
 	inform_server();				//第一次连接服务器
-	inet_ntop(AF_INET, &localaddr.sin_addr, addr, 16);
-	printf("local port is %s:%hu\n",addr,ntohs(localaddr.sin_port));
 	msgrecv.msg_name = NULL;
 	msgrecv.msg_namelen = 0;
 	msgrecv.msg_iov = iovrecv;
@@ -67,10 +72,6 @@ int main(int argc, char **argv)
 	if(epoll_ctl(epollfd, EPOLL_CTL_ADD, STDIN_FILENO, &ev) == -1)
 		err_sys("epoll_ctl error");
 	
-	char input[UDPMAXLINE];		//UDPMAXLINE是576-8-20=548个字节，其实这里再加1也是可以的，因为不会把'\0'发出
-	char rest_input[UDPMAXLINE-sizeof(control)];
-	int m, nfds;
-	ssize_t n;
 	for( ; ; ){
 		if( (nfds = epoll_wait(epollfd, events, cliMAX_EVENTS, -1)) == -1){				//考虑被信号中断的情况
 			if(errno == EINTR)
@@ -91,7 +92,7 @@ int main(int argc, char **argv)
 						continue;
 					}
 					printf("control message is ***%s***,rest message is ***%s***\n",control,rest_input);
-					do_send(control, sizeof(control), rest_input, strlen(rest_input));		
+					operate(control, sizeof(control), rest_input, strlen(rest_input));		
 				}
 				
 			}
@@ -149,10 +150,14 @@ void inform_server()
 }
 
 //根据control字段决定发给谁，发什么
-void do_send(char* control, size_t len1, char* mes, size_t len2)
+void operate(char* control, size_t len1, char* mes, size_t len2)
 {
 	if(strcmp(control,"update") == 0){
 		req2serv(control, len1, mes, len2);
+	}
+	if(strcmp(control,"quit") == 0){
+		req2serv(control,len1,name,namelen);
+		exit(5);
 	}
 	else if(strcmp(control,"chatall") == 0){
 		chat2all(control, len1, mes, len2);
@@ -281,19 +286,13 @@ void req2serv(char* control, size_t len1, char* mes, size_t len2)
 	iovsend[1].iov_base = mes;
 	iovsend[1].iov_len = len2;
 	if(strcmp(control, "login") == 0){		//要发送本地内网地址
-	//	msgsend.msg_iovlen = 3;
 		getlocalip();
 		printf("local ip is %s:%d\n", inet_ntoa(localaddr.sin_addr),ntohs(localaddr.sin_port));
-//		localaddr.sin_addr.s_addr = htonl(localaddr.sin_addr.s_addr);		//转成网络字节序
 		iovsend[2].iov_base = &localaddr;
 		iovsend[2].iov_len = sizeof(localaddr);
 	} 
 	if( (n = sendmsg(sockfd, &msgsend, 0)) < 0)
 		err_sys("sendmsg to server error");
-	printf("sizeof struct user is %lu\n", sizeof(struct user));
-	printf("sizeof sturct sockaddr_in is %lu\n", sizeof(struct sockaddr_in));
-	printf("first send %lu bytes\n",n);
-//	msgsend.msg_iovlen = 2;
 }
 
 
@@ -384,4 +383,15 @@ void getlocalip()
 	freeifaddrs(ifaddr);
 }
 
+void alarm_handler(int signo)
+{
 
+
+}
+
+void interrupt_handler(int signo)
+{
+	printf("detect sigint\n");
+	exit(10);
+
+}
