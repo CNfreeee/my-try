@@ -18,6 +18,8 @@ static string string_name;
 
 int main(int argc, char **argv)
 {
+	char control[commandlen] = {0};				//存放控制信息
+	char recvline[MAXLINE];
 	if(argc != 2)
 		err_sys("invalid arg");
 	
@@ -33,21 +35,19 @@ int main(int argc, char **argv)
 	
 	msgsend.msg_iov = iovsend;
 	msgsend.msg_iovlen = 3;
-	
-	localaddr.sin_addr.s_addr = htonl(INADDR_ANY);		//绑定udp套接字
-	localaddr.sin_family = AF_INET;
-	localaddr.sin_port = htons(PORT);
-	int i = 1;
-	while(bind(sockfd, (struct sockaddr*) &localaddr, sizeof(localaddr)) < 0){
-		perror("bind error");
-		localaddr.sin_port = htons(PORT+i);
-		++i;
-		if( i > 10)
-			err_sys("bind error");
-	}
+
+	if(sendto(sockfd, control, commandlen, 0, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
+		err_sys("sendto failed\n");
+	socklen_t len = sizeof(localaddr);
+	if(getsockname(sockfd, (struct sockaddr*)&localaddr, &len) < 0)
+		err_sys("getsockname failed");
+	char addr[16] = {0};
+	inet_ntop(AF_INET, &localaddr.sin_addr, addr, 16);
+	printf("local port is %s:%hu\n",addr,ntohs(localaddr.sin_port));
+
 	inform_server();				//第一次连接服务器
-	char control[commandlen] = {0};				//存放控制信息
-	char recvline[MAXLINE];
+	inet_ntop(AF_INET, &localaddr.sin_addr, addr, 16);
+	printf("local port is %s:%hu\n",addr,ntohs(localaddr.sin_port));
 	msgrecv.msg_name = NULL;
 	msgrecv.msg_namelen = 0;
 	msgrecv.msg_iov = iovrecv;
@@ -56,8 +56,6 @@ int main(int argc, char **argv)
 	iovrecv[0].iov_len = sizeof(control);
 	iovrecv[1].iov_base = recvline;
 	iovrecv[1].iov_len = sizeof(recvline);
-	//if( connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0)		//采用connect的udp套接字可以很容易的判断服务器是否在线
-	//	err_sys("connect error");
 
 	if( (epollfd = epoll_create(cliMAX_EVENTS)) == -1)			//注册事件
 		err_sys("epoll_create error");
@@ -139,6 +137,14 @@ void inform_server()
 	strcpy(command,"login");
 	printf("your name is %s *** and its length is %lu\n", name, strlen(name));
 	printf("connecting ...\n");
+	if(sendto(sockfd, "try connect" ,commandlen, 0, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)	//让系统给该套接字分配一个临时的端口号
+		err_sys("sendto failed\n");
+	socklen_t len = sizeof(localaddr);
+	if(getsockname(sockfd, (struct sockaddr*)&localaddr, &len) < 0)
+		err_sys("getsockname failed");
+	char addr[16] = {0};
+	inet_ntop(AF_INET, &localaddr.sin_addr, addr, 16);
+	printf("local port is %s:%hu\n",addr,ntohs(localaddr.sin_port));
 	req2serv(command, sizeof(command), name, namelen);			//第四个参数取决于服务器接收端的第二个buf
 }
 
@@ -250,7 +256,6 @@ void chat2all(char* control, size_t len1, char* mes, size_t len2)
 void show_users()
 {
 	int onlinenums = usermap.size();
-	ssize_t n = 0;
 	if(onlinenums == 0){
 		printf("none is online\n");
 		return;
@@ -327,7 +332,7 @@ void parseRecv(ssize_t n)
 	else if(strcmp((char*)iovrecv[0].iov_base,"chatall") == 0 || strcmp((char*)iovrecv[0].iov_base,"chat") == 0){	//iovrecv[1]的前12个字节是发送端的名字
 		char fromwho[namelen];
 		memcpy(fromwho,iovrecv[1].iov_base,12);
-		printf("%s:%s\n",fromwho,(char*)(iovrecv[1].iov_base+12));
+		printf("%s:%s\n",fromwho,(char*)(iovrecv[1].iov_base)+12);
 	}
 	else if(strcmp((char*)iovrecv[0].iov_base,"try") == 0){
 		printf("unexpected try control\n");		
@@ -342,7 +347,7 @@ void update_map(ssize_t n)
 	unsigned long int num = n/sizeof(struct user);
 	printf("n is %lu and the num of user is %lu\n",n,num);
 	struct user tempuser;
-	int i;
+	unsigned int i;
 	char control[commandlen] = "try";
 	std::pair< map<string, struct user>::iterator,bool> ret;	//用来判断是否插入成功，如果插入成功，说明是新用户，则需要发送udp打洞探测包
 	for(i = 0; i < num; i++){
@@ -371,7 +376,7 @@ void getlocalip()
 	for(ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next){
 		if(ifa->ifa_addr == NULL)				
 			continue;
-		if(ifa->ifa_addr->sa_family == AF_INET && (strcmp(ifa->ifa_name,"lo") != 0)){
+		if(ifa->ifa_addr->sa_family == AF_INET && (strcmp(ifa->ifa_name,"lo") != 0)){	//保存非环回地址的ipv4地址
 			struct sockaddr_in *ipAddr = (struct sockaddr_in *)ifa->ifa_addr;
 			localaddr.sin_addr = ipAddr->sin_addr;
 		}

@@ -93,7 +93,9 @@ int main(int argc, char **argv)
 						err_sys("recvfrom error");
 					printf("receive %lu bytes\n",n);
 					printf("receive control message %s from %s\n",(char*)iovrecv[0].iov_base, (char*)iovrecv[1].iov_base);
-					
+					if(strcmp(command,"try connect") == 0){			
+						continue;
+					}
 					if(inet_ntop(AF_INET, &(cliaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
 						err_sys("inet_ntop error");
 					printf("receive message from %s: %hu \n",addrstr, ntohs(cliaddr.sin_port));	//网络字节序转成主机字节序显示

@@ -72,7 +72,8 @@ void send_usermap(const int fd, char* control)
 			++i;		
 		}
 	}
-	printf("sendmsg send %lu bytes\n",sendmsg(fd, &msgsend, 0));
+	if(sendmsg(fd, &msgsend, 0) < 0)
+		err_sys("sendmsg error\n");
 	printf("******************\n");
 	free(iovsend);	
 	if(pthread_mutex_unlock(&maplock) != 0)
