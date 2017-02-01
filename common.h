@@ -38,7 +38,7 @@ struct user{
 	int bind_fd;		//最后活跃时间
 	char name[namelen];			//用户名
 	struct sockaddr_in addr;		//客户端地址
-	struct sockaddr_in inner_addr;		//对局域网主机而说，本地地址
+	struct sockaddr_in inner_addr;		//对局域网主机来说的本地地址
 };
 
 

@@ -3,11 +3,11 @@
 extern "C"{
 #include "../common.h"
 }
-#include <queue>
+#include <deque>
 #include <string>
 #include <iostream>
 #include <map>
-using std::queue;
+using std::deque;
 using std::string;
 using std::map;
 using std::cout;
@@ -28,13 +28,15 @@ void do_job(struct job*);
 int parse_command(const char *);			//解析命令
 void send_usermap(const int, char*);				//发送在线用户
 void delete_user(const int, char*);
+void inform_others(struct user*);
+
 void* thread_main(void*);
 
 extern pthread_mutex_t joblock;
 extern pthread_mutex_t maplock;
 extern pthread_cond_t condready;
 extern pthread_mutex_t malloclock;
-extern queue<struct job*> jobs;			//任务队列
+extern deque<struct job*> jobs;			//任务队列
 extern map<string,struct user> usermap;	//保存当前登陆用户,string为用户名
 extern int epollfd;
 

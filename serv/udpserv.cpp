@@ -3,7 +3,7 @@
 int epollfd;
 static struct epoll_event ev,events[servMAX_EVENTS];
 
-queue<struct job*> jobs;
+deque<struct job*> jobs;
 map<string,struct user> usermap;
 
 pthread_mutex_t joblock = PTHREAD_MUTEX_INITIALIZER;
@@ -90,9 +90,13 @@ int main(int argc, char **argv)
 				if(events[m].events & EPOLLIN){
 					//bzero(command,sizeof(command));				//收到的数据不以'\0'结尾，需手动加上
 					bzero(recvname,sizeof(recvname));
-					if( (n = recvmsg(sockfd, &msgrecv, 0)) < 0)
-						err_sys("recvfrom error");
-					
+					if( (n = recvmsg(sockfd, &msgrecv, 0)) < 0){
+						if(errno == ECONNREFUSED)
+							continue;
+																		
+						else
+							err_sys("recvfrom error");
+					}
 					printf("receive %lu bytes\n",n);
 					printf("receive control message %s from %s\n",(char*)iovrecv[0].iov_base, (char*)iovrecv[1].iov_base);
 					if(strcmp(command,"try connect") == 0){			
@@ -126,7 +130,7 @@ int main(int argc, char **argv)
 					newjob->peerlocaladdr = peerlocaladdr;
 					if(pthread_mutex_lock(&joblock) != 0)
 						err_sys("job lock failed\n");
-					jobs.push(newjob);
+					jobs.push_back(newjob);
 					if(pthread_mutex_unlock(&joblock) != 0)
 						err_sys("job unlock failed\n");
 					if(pthread_cond_signal(&condready) != 0)
@@ -141,9 +145,13 @@ int main(int argc, char **argv)
 			else{
 					tempsockfd = events[m].data.fd;
 					//bzero(command,sizeof(command));		//发送端在发command前会将缓冲区清空，所以注释掉这句
-					if( (n = recvmsg(tempsockfd, &msgrecv, 0)) < 0)												
-						err_sys("recvfrom error");
-					
+					if( (n = recvmsg(tempsockfd, &msgrecv, 0)) < 0){												
+						if(errno == ECONNREFUSED)
+							continue;
+																		
+						else
+							err_sys("recvfrom error");
+					}
 
 					if(inet_ntop(AF_INET, &cliaddr.sin_addr,addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
 						err_sys("inet_ntop error");
@@ -151,16 +159,23 @@ int main(int argc, char **argv)
 					printf("sockid is %d\n",tempsockfd);
 					printf("receive control message is **%s**\n", (char*)iovrecv[0].iov_base);
 					
-					pthread_mutex_lock(&joblock);
+					if(pthread_mutex_lock(&malloclock) != 0)
+						err_sys("malloc lock failed\n");
 					struct job* newjob = (struct job*)malloc(sizeof(struct job));		//将此请求加入任务队列
+					if(pthread_mutex_unlock(&malloclock) != 0)
+						err_sys("malloc unlock failed\n");
+
 					bzero(newjob,sizeof(struct job));
 					strcpy(newjob->control,(char*)iovrecv[0].iov_base);
 					newjob->fd = tempsockfd;
+					pthread_mutex_lock(&joblock);
 					//要根据发送的用户名来更新在线用户列表
 					if(strcmp(command,"quit") == 0){			
 						strcpy(newjob->peer_name,(char*) iovrecv[1].iov_base);
+						jobs.push_front(newjob);			//此消息比较重要，放在工作队列队首
 					}
-					jobs.push(newjob);
+					else
+						jobs.push_back(newjob);
 					pthread_mutex_unlock(&joblock);
 					pthread_cond_signal(&condready);		
 
@@ -183,7 +198,7 @@ void* thread_main(void* arg)
 		while(jobs.empty())
 			pthread_cond_wait(&condready,&joblock);
 		currentjob = jobs.front();
-		jobs.pop();
+		jobs.pop_front();
 		if(pthread_mutex_unlock(&joblock) != 0)
 			err_sys("job unlock failed\n");
 		do_job(currentjob);

@@ -155,7 +155,7 @@ void operate(char* control, size_t len1, char* mes, size_t len2)
 	if(strcmp(control,"update") == 0){
 		req2serv(control, len1, mes, len2);
 	}
-	if(strcmp(control,"quit") == 0){
+	else if(strcmp(control,"quit") == 0){
 		req2serv(control,len1,name,namelen);
 		exit(5);
 	}
@@ -337,6 +337,10 @@ void parseRecv(ssize_t n)
 		printf("unexpected try control\n");		
 		//control字段为try表示udp打洞消息不过应该永远都收不到这个消息才对
 	}
+	else if(strcmp((char*)iovrecv[0].iov_base,"delete") == 0)
+		delete_user((char*)iovrecv[1].iov_base);
+	else if(strcmp((char*)iovrecv[0].iov_base,"add") == 0)
+		add_user();	
 	else
 		printf("unknown receive\n");
 }
@@ -367,6 +371,17 @@ void update_map(ssize_t n)
 	}
 }
 
+void add_user()
+{
+	struct user tempuser;
+	char control[commandlen] = "try";
+	memcpy(&tempuser, (char*)iovrecv[1].iov_base, sizeof(struct user));
+	string stemp(tempuser.name);
+	usermap.insert(map<string, struct user>::value_type(stemp,tempuser));
+	sendto(sockfd, control, sizeof(control), 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));
+	printf("%s is online\n",tempuser.name);
+}
+
 void getlocalip()
 {
 	struct ifaddrs *ifaddr,*ifa;
@@ -381,6 +396,14 @@ void getlocalip()
 		}
 	}
 	freeifaddrs(ifaddr);
+}
+
+void delete_user(char* target_name)
+{
+	string sname(target_name);
+	if(usermap.erase(sname) != 0)
+		printf("delete %s successfully\n",target_name);
+	return;
 }
 
 void alarm_handler(int signo)

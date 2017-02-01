@@ -12,6 +12,8 @@ void operate(char*, size_t, char*, size_t);
 void req2serv(char*, size_t, char*, size_t);
 void chat2all(char*, size_t, char*, size_t);
 void chat2one(char*, size_t, char*, size_t);
+void delete_user(char*);
+void add_user();
 void show_users();
 void alarm_handler(int);
 void interrupt_handler(int);
