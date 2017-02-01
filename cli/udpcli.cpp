@@ -377,6 +377,8 @@ void add_user()
 	char control[commandlen] = "try";
 	memcpy(&tempuser, (char*)iovrecv[1].iov_base, sizeof(struct user));
 	string stemp(tempuser.name);
+	if(usermap.find(stemp)!=usermap.end())
+		usermap.erase(stemp);
 	usermap.insert(map<string, struct user>::value_type(stemp,tempuser));
 	sendto(sockfd, control, sizeof(control), 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));
 	printf("%s is online\n",tempuser.name);
