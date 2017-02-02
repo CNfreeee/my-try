@@ -1,6 +1,7 @@
 #include "servfunc.h"
 
 int epollfd;
+
 static struct epoll_event ev,events[servMAX_EVENTS];
 
 deque<struct job*> jobs;
@@ -8,7 +9,6 @@ map<string,struct user> usermap;
 
 pthread_mutex_t joblock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t maplock = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t malloclock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condready = PTHREAD_COND_INITIALIZER;
 					
 
@@ -16,7 +16,7 @@ pthread_cond_t condready = PTHREAD_COND_INITIALIZER;
 int main(int argc, char **argv)
 {
 	int sockfd;
-	int i;
+	long int i;
 	struct sockaddr_in servaddr,cliaddr;
 	struct msghdr msgrecv;
 	bzero(&msgrecv, sizeof(msgrecv));
@@ -24,6 +24,15 @@ int main(int argc, char **argv)
 	char recvname[namelen];
 	struct sockaddr_in peerlocaladdr;
 	struct iovec iovrecv[3];
+	
+	/*struct sigaction SIGALRM_act;
+	SIGALRM_act.sa_handler = alarm_handler;
+	sigemptyset(&SIGALRM_act.sa_mask);
+	SIGALRM_act.sa_flags = 0;
+	SIGALRM_act.sa_flags |= SA_RESTART;
+	if(sigaction(SIGALRM, &SIGALRM_act, NULL) < 0)
+		err_sys("sigaction error\n");
+	*/
 	bzero(&peerlocaladdr,sizeof(peerlocaladdr));
 	msgrecv.msg_name = (struct sockaddr *)&cliaddr;
 	socklen_t len = sizeof(cliaddr);
@@ -68,12 +77,13 @@ int main(int argc, char **argv)
 	if(epoll_ctl(epollfd, EPOLL_CTL_ADD, sockfd, &ev) == -1)
 		err_sys("epoll_ctl error");
 	
-	pthread_t *pth = (pthread_t*)malloc(threadsnum * sizeof(pthread_t));
-	for(i = 0; i < threadsnum; i++){									//创建线程池
+	pthread_t *pth = (pthread_t*)malloc((threadsnum+1) * sizeof(pthread_t));
+	for(i = 0; i < threadsnum; ++i){									//创建线程池
 		if(pthread_create(&pth[i], NULL, &thread_main, NULL)!= 0)
 			err_sys("pthread poll create failed");
 	}
-
+	if(pthread_create(&pth[i], NULL, &thread_heart, NULL)!= 0)
+		err_sys("pthread poll create failed");
 	int nfds,m;
 	char addrstr[16] = {0};
 	ssize_t n;
@@ -117,11 +127,7 @@ int main(int argc, char **argv)
 					if( connect(newfd, (struct sockaddr *) &cliaddr, sizeof(cliaddr)) < 0)		
 							err_sys("connect error");
 					
-					if(pthread_mutex_lock(&malloclock) != 0)
-						err_sys("malloc lock failed\n");					//malloc是线程不安全的，把其放在锁里
-					struct job* newjob = (struct job*)malloc(sizeof(struct job));		//将此请求加入任务队列
-					if(pthread_mutex_unlock(&malloclock) != 0)
-						err_sys("malloc unlock failed\n");					
+					struct job* newjob = (struct job*)malloc(sizeof(struct job));		//将此请求加入任务队列					
 					bzero(newjob,sizeof(struct job));
 					strcpy(newjob->control,(char*)iovrecv[0].iov_base);
 					newjob->fd = newfd;
@@ -152,6 +158,12 @@ int main(int argc, char **argv)
 						else
 							err_sys("recvfrom error");
 					}
+					
+					if(strcmp(command, "heart") == 0){		//收到心跳包
+						string sname((char*)iovrecv[1].iov_base);
+						++usermap.find(sname)->second.count;
+						continue;
+					}
 
 					if(inet_ntop(AF_INET, &cliaddr.sin_addr,addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
 						err_sys("inet_ntop error");
@@ -159,12 +171,7 @@ int main(int argc, char **argv)
 					printf("sockid is %d\n",tempsockfd);
 					printf("receive control message is **%s**\n", (char*)iovrecv[0].iov_base);
 					
-					if(pthread_mutex_lock(&malloclock) != 0)
-						err_sys("malloc lock failed\n");
-					struct job* newjob = (struct job*)malloc(sizeof(struct job));		//将此请求加入任务队列
-					if(pthread_mutex_unlock(&malloclock) != 0)
-						err_sys("malloc unlock failed\n");
-
+					struct job* newjob = (struct job*)malloc(sizeof(struct job));	
 					bzero(newjob,sizeof(struct job));
 					strcpy(newjob->control,(char*)iovrecv[0].iov_base);
 					newjob->fd = tempsockfd;
@@ -207,11 +214,48 @@ void* thread_main(void* arg)
 	return (void*)0;
 }
 
+void* thread_heart(void* arg)
+{
+	map<string,struct user>::iterator it;
+	char control[commandlen] = "quit";
+	sleep(10);
+	for(;;){
+		pthread_mutex_lock(&maplock);
+		if(usermap.size() == 0){
+			printf("heart\n");			
+			goto skip;
+		}
+		printf("heart2\n");
+		for(it = usermap.begin(); it != usermap.end(); ++it){
+			if(it->second.count > 0)
+				it->second.count = 0;
+			else{
+				struct job* newjob = (struct job*)malloc(sizeof(struct job));		//将此请求加入任务队列					
+				bzero(newjob,sizeof(struct job));
+				strcpy(newjob->control,control);
+				newjob->fd = it->second.bind_fd;
+				strcpy(newjob->peer_name,it->second.name);
+				pthread_mutex_lock(&joblock);
+				jobs.push_front(newjob);
+				pthread_mutex_unlock(&joblock);
+				pthread_cond_signal(&condready);
+			}		
+		}
+	skip:	
+		pthread_mutex_unlock(&maplock);
+		sleep(10);
+	}
+	return (void*)0;
+}
 
+void alarm_handler(int signo)
+{
+	printf("detect sigalarm\n");
+	int save_errno = errno;
+	sleep(50);
+	errno = save_errno;
 
-
-
-
+}
 
 
 

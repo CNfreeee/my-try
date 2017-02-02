@@ -16,6 +16,22 @@ static struct iovec iovsend[3], iovrecv[2];
 static char name[namelen+2];				//本地登录名
 static string string_name;
 
+
+
+void* thread_heart(void* arg)
+{
+	char control[commandlen] = "heart";
+	char message[commandlen+namelen] = {0};
+	memcpy(message, control, commandlen);
+	memcpy(message+commandlen, name, namelen);
+	sleep(1);
+	for(;;){
+		sendto(sockfd, message, sizeof(message), 0, (struct sockaddr*)&servaddr, sizeof(servaddr));
+		sleep(1);
+	}
+	return (void*)0;
+}
+
 int main(int argc, char **argv)
 {
 	char control[commandlen] = {0};				//存放控制信息
@@ -24,6 +40,8 @@ int main(int argc, char **argv)
 	char rest_input[UDPMAXLINE-sizeof(control)];
 	int m, nfds;
 	ssize_t n;
+	pthread_t tid;
+	/*	
 	struct sigaction SIGALRM_act, SIGINT_act;
 	SIGALRM_act.sa_handler = alarm_handler;
 	SIGINT_act.sa_handler = interrupt_handler;
@@ -37,6 +55,7 @@ int main(int argc, char **argv)
 		err_sys("sigaction error\n");
 	if(sigaction(SIGINT, &SIGINT_act, NULL) < 0)
 		err_sys("sigaction error\n");
+	*/
 	servaddr.sin_family      = AF_INET;
 	servaddr.sin_port        = htons(PORT-1);
 	if(argc != 2)
@@ -53,6 +72,10 @@ int main(int argc, char **argv)
 	msgsend.msg_iovlen = 3;
 
 	inform_server();				//第一次连接服务器
+
+	if(pthread_create(&tid, NULL, &thread_heart, NULL)!= 0)
+			err_sys("thread create failed");
+
 	msgrecv.msg_name = NULL;
 	msgrecv.msg_namelen = 0;
 	msgrecv.msg_iov = iovrecv;
@@ -61,6 +84,8 @@ int main(int argc, char **argv)
 	iovrecv[0].iov_len = sizeof(control);
 	iovrecv[1].iov_base = recvline;
 	iovrecv[1].iov_len = sizeof(recvline);
+	
+	//alarm(10);
 
 	if( (epollfd = epoll_create(cliMAX_EVENTS)) == -1)			//注册事件
 		err_sys("epoll_create error");
@@ -410,7 +435,9 @@ void delete_user(char* target_name)
 
 void alarm_handler(int signo)
 {
-
+	printf("detect sigalarm\n");
+	int save_errno = errno;
+	errno = save_errno;
 
 }
 

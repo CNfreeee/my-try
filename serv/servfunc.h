@@ -27,15 +27,14 @@ void save_cli(const struct job*);
 void do_job(struct job*);
 int parse_command(const char *);			//解析命令
 void send_usermap(const int, char*);				//发送在线用户
-void delete_user(const int, char*);
-void inform_others(struct user*);
-
+void delete_user(const int, char*);			//用户下线，删除该用户并告知其他人
+void inform_others(struct user*);			//用户上线，告知其他人
+void alarm_handler(int);
 void* thread_main(void*);
-
+void* thread_heart(void*);
 extern pthread_mutex_t joblock;
 extern pthread_mutex_t maplock;
 extern pthread_cond_t condready;
-extern pthread_mutex_t malloclock;
 extern deque<struct job*> jobs;			//任务队列
 extern map<string,struct user> usermap;	//保存当前登陆用户,string为用户名
 extern int epollfd;

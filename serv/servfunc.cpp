@@ -58,11 +58,7 @@ void send_usermap(const int fd, char* control)
 	num = usermap.size();	
 	struct msghdr msgsend;
 	bzero(&msgsend, sizeof(msgsend));
-	if(pthread_mutex_lock(&malloclock) != 0)
-		err_sys("malloc lock failed\n");
 	struct iovec* iovsend = (struct iovec*)malloc((num+1) * sizeof(struct iovec));
-	if(pthread_mutex_unlock(&malloclock) != 0)
-		err_sys("malloc unlock failed\n");
 	bzero(iovsend, (num+1) * sizeof(struct iovec));
 	msgsend.msg_iov = iovsend;
 	msgsend.msg_iovlen = num + 1;
@@ -100,7 +96,7 @@ void save_cli(const struct job* currentjob)
 	current_user.addr = currentjob->peeraddr;
 	current_user.inner_addr = currentjob->peerlocaladdr;
 	current_user.bind_fd = currentjob->fd;
-	
+	current_user.count = 1;
 	inform_others(&current_user);		//告知在线用户新用户上线
 	
 	if(pthread_mutex_lock(&maplock) != 0)

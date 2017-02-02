@@ -17,3 +17,4 @@ void add_user();
 void show_users();
 void alarm_handler(int);
 void interrupt_handler(int);
+void* thread_heart(void*);

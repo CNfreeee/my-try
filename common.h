@@ -35,7 +35,8 @@ struct file{
 
 //客户结构体，包含客户的地址，名字，最后活跃时间
 struct user{
-	int bind_fd;		//最后活跃时间
+	int bind_fd;				//与该用户绑定的套接字
+	int count;
 	char name[namelen];			//用户名
 	struct sockaddr_in addr;		//客户端地址
 	struct sockaddr_in inner_addr;		//对局域网主机来说的本地地址
