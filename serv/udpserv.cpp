@@ -221,11 +221,9 @@ void* thread_heart(void* arg)
 	sleep(10);
 	for(;;){
 		pthread_mutex_lock(&maplock);
-		if(usermap.size() == 0){
-			printf("heart\n");			
+		if(usermap.size() == 0)			
 			goto skip;
-		}
-		printf("heart2\n");
+		
 		for(it = usermap.begin(); it != usermap.end(); ++it){
 			if(it->second.count > 0)
 				it->second.count = 0;

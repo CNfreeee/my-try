@@ -193,6 +193,12 @@ void operate(char* control, size_t len1, char* mes, size_t len2)
 	else if(strcmp(control,"show") == 0){
 		show_users();
 	}
+	else if(strcmp(control,"help") == 0){
+		printf("command \"show\" will show you which users are online\n");
+		printf("command \"chat somebody something\" will send something to a specific one\n");
+		printf("command \"chatall something\" will send something to all online users\n");
+		printf("command \"update\" will request server to update online user list\n");
+	}
 	else
 		printf("unknown control message\n");
 
