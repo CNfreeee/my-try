@@ -19,7 +19,6 @@ int main(int argc, char **argv)
 	long int i;
 	struct sockaddr_in servaddr,cliaddr;
 	struct msghdr msgrecv;
-	bzero(&msgrecv, sizeof(msgrecv));
 	char command[commandlen];
 	char recvname[namelen];
 	struct sockaddr_in peerlocaladdr;
@@ -33,6 +32,7 @@ int main(int argc, char **argv)
 	if(sigaction(SIGALRM, &SIGALRM_act, NULL) < 0)
 		err_sys("sigaction error\n");
 	*/
+	bzero(&msgrecv, sizeof(msgrecv));
 	bzero(&peerlocaladdr,sizeof(peerlocaladdr));
 	msgrecv.msg_name = (struct sockaddr *)&cliaddr;
 	socklen_t len = sizeof(cliaddr);
