@@ -82,7 +82,7 @@ int main(int argc, char **argv)
 		if(pthread_create(&pth[i], NULL, &thread_main, NULL)!= 0)
 			err_sys("pthread poll create failed");
 	}
-	if(pthread_create(&pth[i], NULL, &thread_heart, NULL)!= 0)
+	if(pthread_create(&pth[i], NULL, &thread_detect, NULL)!= 0)
 		err_sys("pthread poll create failed");
 	int nfds,m;
 	char addrstr[16] = {0};
@@ -214,7 +214,7 @@ void* thread_main(void* arg)
 	return (void*)0;
 }
 
-void* thread_heart(void* arg)
+void* thread_detect(void* arg)
 {
 	map<string,struct user>::iterator it;
 	char control[commandlen] = "quit";
@@ -228,7 +228,7 @@ void* thread_heart(void* arg)
 			if(it->second.count > 0)
 				it->second.count = 0;
 			else{
-				struct job* newjob = (struct job*)malloc(sizeof(struct job));		//将此请求加入任务队列					
+				struct job* newjob = (struct job*)malloc(sizeof(struct job));						
 				bzero(newjob,sizeof(struct job));
 				strcpy(newjob->control,control);
 				newjob->fd = it->second.bind_fd;
@@ -248,7 +248,6 @@ void* thread_heart(void* arg)
 
 void alarm_handler(int signo)
 {
-	printf("detect sigalarm\n");
 	int save_errno = errno;
 	sleep(50);
 	errno = save_errno;

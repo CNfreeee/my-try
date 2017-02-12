@@ -166,12 +166,17 @@ void delete_user(const int fd, char* name)
 		err_sys("map lock failed");
 	if(usermap.erase(sname) != 1){
 		if(pthread_mutex_unlock(&maplock) != 0)
-			err_sys("map unlock failed");
+			err_sys("map unlock failed");		
 		return;
 	}
+	if(-1 == epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL))
+		err_sys("epoll_ctl error\n");
+	close(fd);
+	printf("delete %s\n",name);
 	if(usermap.size() == 0){
 		if(pthread_mutex_unlock(&maplock) != 0)
 			err_sys("map unlock failed");
+		
 		return;
 	}
 	
@@ -187,9 +192,5 @@ void delete_user(const int fd, char* name)
 	} 
 	if(pthread_mutex_unlock(&maplock) != 0)
 		err_sys("map unlock failed");
-	if(-1 == epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, NULL))
-		err_sys("epoll_ctl error\n");
-	close(fd);
-	printf("delete %s\n",name);
 	return;
 }

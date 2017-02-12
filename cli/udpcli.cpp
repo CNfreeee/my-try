@@ -15,6 +15,7 @@ static struct msghdr msgsend, msgrecv;		//同一时间不存在多个线程操�
 static struct iovec iovsend[3], iovrecv[2];
 static char name[namelen+2];				//本地登录名
 static string string_name;
+static pthread_mutex_t maplock = PTHREAD_MUTEX_INITIALIZER;
 
 
 
@@ -22,11 +23,24 @@ void* thread_heart(void* arg)
 {
 	char control[commandlen] = "heart";
 	char message[commandlen+namelen] = {0};
+	struct sockaddr_in peeraddr;
+	int time_count = 0;
 	memcpy(message, control, commandlen);
 	memcpy(message+commandlen, name, namelen);
 	sleep(1);
 	for(;;){
 		sendto(sockfd, message, sizeof(message), 0, (struct sockaddr*)&servaddr, sizeof(servaddr));
+		++time_count;
+		if(time_count > 60){
+			map<string, struct user>::iterator it;
+			pthread_mutex_lock(&maplock);
+			for(it = usermap.begin(); it != usermap.end(); ++it){
+				peeraddr = it->second.addr;
+				sendto(sockfd, message, 0, 0, (struct sockaddr*)&peeraddr, sizeof(peeraddr));
+			}
+			pthread_mutex_unlock(&maplock);
+			time_count = 0;
+		}
 		sleep(1);
 	}
 	return (void*)0;
@@ -127,6 +141,10 @@ int main(int argc, char **argv)
 					bzero(recvline, sizeof(recvline));			//每次都要把接收缓冲区全部置0
 					if( (n = recvmsg(sockfd, &msgrecv, 0)) < 0)
 						err_sys("recvmsg error");
+					if(n == 0){
+						printf("******\n");
+						continue;
+					}
 					printf("recvmsg receive %ld bytes from sockfd\n",n);
 					parseRecv(n - sizeof(control));			//数据字节数,故要减去控制字段字节
 				}
@@ -177,10 +195,10 @@ void inform_server()
 //根据control字段决定发给谁，发什么
 void operate(char* control, size_t len1, char* mes, size_t len2)
 {
-	if(strcmp(control,"update") == 0){
-		req2serv(control, len1, mes, len2);
-	}
-	else if(strcmp(control,"quit") == 0){
+	//if(strcmp(control,"update") == 0){
+	//	req2serv(control, len1, mes, len2);
+	//}
+	if(strcmp(control,"quit") == 0){
 		req2serv(control,len1,name,namelen);
 		exit(5);
 	}
@@ -197,7 +215,7 @@ void operate(char* control, size_t len1, char* mes, size_t len2)
 		printf("command \"show\" will show you which users are online\n");
 		printf("command \"chat somebody something\" will send something to a specific one\n");
 		printf("command \"chatall something\" will send something to all online users\n");
-		printf("command \"update\" will request server to update online user list\n");
+	//	printf("command \"update\" will request server to update online user list\n");
 	}
 	else
 		printf("unknown control message\n");
@@ -268,6 +286,7 @@ void chat2all(char* control, size_t len1, char* mes, size_t len2)
 	iovsend[2].iov_base = mes;
 	iovsend[2].iov_len = len2;
 	
+	pthread_mutex_lock(&maplock);
 	map<string,struct user>::iterator it;
 	for(it = usermap.begin(); it != usermap.end(); ++it){	
 		peeraddr = it->second.addr;
@@ -287,6 +306,7 @@ void chat2all(char* control, size_t len1, char* mes, size_t len2)
 		if( (n = sendmsg(sockfd, &msgsend, 0)) < 0)
 			err_sys("sendmsg to server error");	
 	}	
+	pthread_mutex_unlock(&maplock);
 }
 
 void show_users()
@@ -298,9 +318,12 @@ void show_users()
 	}
 	map<string,struct user>::iterator it;
 	printf("existing users are: ");
+
+	pthread_mutex_lock(&maplock);
 	for(it = usermap.begin(); it!=usermap.end(); ++it){
 		printf("%s, ",it->second.name);
 	}
+	pthread_mutex_unlock(&maplock);
 	printf("\n");
 
 }
@@ -372,8 +395,8 @@ void parseRecv(ssize_t n)
 		delete_user((char*)iovrecv[1].iov_base);
 	else if(strcmp((char*)iovrecv[0].iov_base,"add") == 0)
 		add_user();	
-	else
-		printf("unknown receive\n");
+//	else
+//		printf("unknown receive\n");
 }
 
 void update_map(ssize_t n)
@@ -384,22 +407,24 @@ void update_map(ssize_t n)
 	unsigned int i;
 	char control[commandlen] = "try";
 	std::pair< map<string, struct user>::iterator,bool> ret;	//用来判断是否插入成功，如果插入成功，说明是新用户，则需要发送udp打洞探测包
+	pthread_mutex_lock(&maplock);
 	for(i = 0; i < num; i++){
 		memcpy(&tempuser, (char*)iovrecv[1].iov_base+i*sizeof(struct user), sizeof(struct user));
 		string stemp(tempuser.name);
 		if(stemp != string_name){				//需要加入自己，用以比较目标和自己是否处于同一个局域网
-			ret = usermap.insert(map<string, struct user>::value_type(stemp,tempuser));			//收到的地址都是网络字节序
+			ret = usermap.insert(map<string, struct user>::value_type(stemp,tempuser));			
 			if(ret.second == true){
-				sendto(sockfd, control, sizeof(control), 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));
+				//sendto(sockfd, control, sizeof(control), 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));
+				sendto(sockfd, control, 0, 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));
 			}
 			else
 				printf("already exist\n");		
 		}
 		else if(outeraddr.sin_port == 0) {		//结构体尚未赋值
-			printf("outeraddr\n");
 			outeraddr = tempuser.addr;
 		}
 	}
+	pthread_mutex_unlock(&maplock);
 }
 
 void add_user()
@@ -408,10 +433,13 @@ void add_user()
 	char control[commandlen] = "try";
 	memcpy(&tempuser, (char*)iovrecv[1].iov_base, sizeof(struct user));
 	string stemp(tempuser.name);
+	pthread_mutex_lock(&maplock);
 	if(usermap.find(stemp)!=usermap.end())
 		usermap.erase(stemp);
 	usermap.insert(map<string, struct user>::value_type(stemp,tempuser));
-	sendto(sockfd, control, sizeof(control), 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));
+	pthread_mutex_unlock(&maplock);
+	//sendto(sockfd, control, sizeof(control), 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));		//打洞用	
+	sendto(sockfd, control, 0, 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));		//打洞用	
 	printf("%s is online\n",tempuser.name);
 }
 
@@ -434,14 +462,15 @@ void getlocalip()
 void delete_user(char* target_name)
 {
 	string sname(target_name);
+	pthread_mutex_lock(&maplock);
 	if(usermap.erase(sname) != 0)
 		printf("delete %s successfully\n",target_name);
+	pthread_mutex_unlock(&maplock);
 	return;
 }
 
 void alarm_handler(int signo)
 {
-	printf("detect sigalarm\n");
 	int save_errno = errno;
 	errno = save_errno;
 
@@ -449,7 +478,6 @@ void alarm_handler(int signo)
 
 void interrupt_handler(int signo)
 {
-	printf("detect sigint\n");
 	exit(10);
 
 }

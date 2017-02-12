@@ -31,7 +31,7 @@ void delete_user(const int, char*);			//用户下线，删除该用户并告知�
 void inform_others(struct user*);			//用户上线，告知其他人
 void alarm_handler(int);
 void* thread_main(void*);
-void* thread_heart(void*);
+void* thread_detect(void*);
 extern pthread_mutex_t joblock;
 extern pthread_mutex_t maplock;
 extern pthread_cond_t condready;
