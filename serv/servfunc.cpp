@@ -101,8 +101,11 @@ void save_cli(const struct job* currentjob)
 	
 	if(pthread_mutex_lock(&maplock) != 0)
 		err_sys("map lock failed");
-	if(usermap.find(cliname)!=usermap.end())
-		usermap.erase(cliname);
+	map<string, struct user>::iterator it = usermap.find(cliname);
+	if(it != usermap.end()){
+		close(it->second.bind_fd);
+		usermap.erase(it);
+	}
 	usermap.insert(map<string, struct user>::value_type(cliname,current_user));
 	if(pthread_mutex_unlock(&maplock) != 0)
 		err_sys("map unlock failed");
