@@ -151,10 +151,9 @@ int main(int argc, char **argv)
 			else{
 					tempsockfd = events[m].data.fd;
 					//bzero(command,sizeof(command));		//发送端在发command前会将缓冲区清空，所以注释掉这句
-					if( (n = recvmsg(tempsockfd, &msgrecv, 0)) < 0){												
+					if( (n = recvmsg(tempsockfd, &msgrecv, 0)) < 0){							
 						if(errno == ECONNREFUSED)
-							continue;
-																		
+							continue;						
 						else
 							err_sys("recvfrom error");
 					}

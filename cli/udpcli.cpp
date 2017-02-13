@@ -141,10 +141,8 @@ int main(int argc, char **argv)
 					bzero(recvline, sizeof(recvline));			//每次都要把接收缓冲区全部置0
 					if( (n = recvmsg(sockfd, &msgrecv, 0)) < 0)
 						err_sys("recvmsg error");
-					if(n == 0){
-						printf("******\n");
+					if(n == 0)
 						continue;
-					}
 					printf("recvmsg receive %ld bytes from sockfd\n",n);
 					parseRecv(n - sizeof(control));			//数据字节数,故要减去控制字段字节
 				}
@@ -411,7 +409,7 @@ void update_map(ssize_t n)
 	for(i = 0; i < num; i++){
 		memcpy(&tempuser, (char*)iovrecv[1].iov_base+i*sizeof(struct user), sizeof(struct user));
 		string stemp(tempuser.name);
-		if(stemp != string_name){				//需要加入自己，用以比较目标和自己是否处于同一个局域网
+		if(stemp != string_name){				//用户列表不用加入自己
 			ret = usermap.insert(map<string, struct user>::value_type(stemp,tempuser));			
 			if(ret.second == true){
 				//sendto(sockfd, control, sizeof(control), 0, (struct sockaddr*)&tempuser.addr, sizeof(tempuser.addr));
