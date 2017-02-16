@@ -301,7 +301,6 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 	}*/
 	if( (fd = open(myfile.fileaddr, O_RDONLY)) < 0)	//打开想要传输的文件,之后要记得关闭
 		printf("no such file\n");
-	myfile.fd = fd;
 	if( fstat(fd, &buf) < 0)			//获取文件的stat结构，里面有文件大小信息
 		err_sys("fstat error");
 	myfile.filesize = buf.st_size;
@@ -329,6 +328,7 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 			err_sys("create listenfd error\n");
 		my_arg->flag = 1;
 		my_arg->listenfd = listenfd;
+		my_arg->fd = fd;
 		memcpy(&(my_arg->myfile), &myfile, sizeof(myfile));
 		if(bind(listenfd, (struct sockaddr*) &bindaddr, sizeof(bindaddr)) < 0)
 			err_sys("bind error\n");
@@ -510,6 +510,7 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		peeraddr = it->second.addr;
 		if(strcmp(reply, "yes") == 0){
 			struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+			my_arg->flag = 2;
 			memcpy(str, control+4, strlen(control+4));
 			port = atoi(str);
 			if(peeraddr.sin_addr.s_addr == outeraddr.sin_addr.s_addr){	//在同一个局域网
@@ -521,7 +522,6 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 				tempaddr.sin_port = port;
 			}
 			my_arg->peeraddr = tempaddr;
-			printf("listen port of network byte order is %d\n", port);
 			pthread_t tid;
 			pthread_create(&tid, NULL, thread_connect, (void*)my_arg);
 		}
@@ -654,22 +654,55 @@ void interrupt_handler(int signo)
 void *thread_listen(void *arg)
 {
 	int connfd;
-	char buf[MAXLINE] = "tcp success";
+	ssize_t n, nread;
+	off_t offset, leftbytes;
+	char sendbuf[MAXLINE];
+	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
 	pthread_cleanup_push(listen_cleanup, arg);
-	printf("socket %d start listen\n",((struct file_arg*)arg)->listenfd);
-	if( (connfd = accept(((struct file_arg*)arg)->listenfd, NULL, NULL)) < 0)
+	printf("socket %d start listen\n",farg->listenfd);
+	if( (connfd = accept(farg->listenfd, NULL, NULL)) < 0)
 		err_sys("accept error 1\n");
-	printf("write %ld bytes\n",write(connfd, buf, strlen(buf)));
-	close(connfd);
+	if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
+		err_sys("write error 1");
+	
+	if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
+		err_sys("read error 1"); 
+	else if (n == 0)		//说明对面有该文件
+		goto end;	
+		
+	
+	if(lseek(farg->fd, offset, SEEK_SET) == -1)
+		err_sys("lseek error");
+	leftbytes = farg->myfile.filesize - offset;
+	while(leftbytes > 0){		//发送文件大小个字节
+		if(leftbytes > MAXLINE){
+			if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
+				err_sys("read error");
+		}
+		else{
+			if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
+				err_sys("read error");
+		}
+		leftbytes = leftbytes - nread;
+		if(write(connfd, sendbuf, nread) != nread)
+			err_sys("write error");
+	}
+end:	close(connfd);
 	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 }
 
 void *thread_connect(void *arg)
 {
-	int connfd;
+	int connfd, newfd, n;
 	char recvbuf[MAXLINE] = {0};
+	char filename[64] = {0};
+	off_t offset;
+	off_t leftbytes;
+	ssize_t nread;
+	struct stat buf;
+	struct file myfile;
 	pthread_detach(pthread_self());
 	pthread_cleanup_push(connect_cleanup, arg);
 	
@@ -678,13 +711,53 @@ void *thread_connect(void *arg)
 	struct sockaddr_in tcpaddr = ((struct file_arg*)arg)->peeraddr;
 	if(connect(connfd, (struct sockaddr*)&tcpaddr, sizeof(struct sockaddr_in)) != 0)
 		err_sys("connect error 2\n");
-	int n;
-	if( (n = read(connfd, recvbuf, MAXLINE)) < 0)
-		err_sys("read error\n");
+	
+	if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
+	
+		printf("读成功了%d个字节\n",n);
+		printf("fileaddr为%s\n",myfile.fileaddr);
+		printf("文件的大小为%lu\n",myfile.filesize);
+	}
+	if(strrchr(myfile.fileaddr,'/') != NULL)
+		strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
+	else
+		strcpy(filename,myfile.fileaddr);
+	
+	if(access(filename,F_OK) == 0){		//存在
+		if( (newfd = open(filename, O_RDONLY|O_APPEND)) < 0)	//打开想要传输的文件
+			err_sys("open error");
+		if( fstat(newfd, &buf) < 0)			
+			err_sys("fstat error");
+		offset = buf.st_size;
+		if( offset >= myfile.filesize)
+			goto end;
+		else 
+			write(connfd, &offset, sizeof(off_t));
+	}
+	else{
+		if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
+			err_sys("open error");
+		offset = 0;
+		write(connfd, &offset, sizeof(off_t));
+	}
+	leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
+	
+	while(leftbytes > 0){		//接收文件大小个字节
+		if(leftbytes > MAXLINE){
+			if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
+				err_sys("read error");
+		}
+		else{
+			if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
+				err_sys("read error");
+		}
+		leftbytes = leftbytes - nread;
+		if(write(newfd, recvbuf, nread) != nread)
+			err_sys("write error");
+	}
 
-	printf("read %d bytes\n",n);
-	fputs(recvbuf, stdout);
-	close(connfd);
+
+end:	close(connfd);
 	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 	
@@ -694,7 +767,7 @@ void listen_cleanup(void *arg)
 {
 	printf("step in listen cleanup\n");
 	close(((struct file_arg*)arg)->listenfd);
-	close(((struct file_arg*)arg)->myfile.fd);
+	close(((struct file_arg*)arg)->fd);
 	free(arg);
 	return;
 }

@@ -27,10 +27,9 @@
 #include <ifaddrs.h>
 #include <sys/stat.h>
 
+
 struct file{
-	int fd;
 	off_t filesize;
-	off_t offset;
 	pthread_t thread_id;
 	char fileowner[namelen];
 	char fileaddr[64];
@@ -39,7 +38,8 @@ struct file{
 struct file_arg{
 	int flag;		//1代表文件发送方，2代表文件接收方
 	int listenfd;
-	char name[namelen];
+	int fd;
+	//char name[namelen];
 	struct sockaddr_in peeraddr;
 	struct file myfile;
 };

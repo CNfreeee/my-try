@@ -121,7 +121,7 @@ int main(int argc, char **argv)
 							continue;
 																		
 						else
-							err_sys("recvfrom error");
+							err_sys("recvfrom error 1");
 					}
 					printf("receive %lu bytes\n",n);
 					printf("receive control message %s from %s\n",(char*)iovrecv[0].iov_base, (char*)iovrecv[1].iov_base);
@@ -168,10 +168,11 @@ int main(int argc, char **argv)
 					tempsockfd = events[m].data.fd;
 					//bzero(command,sizeof(command));		//发送端在发command前会将缓冲区清空，所以注释掉这句
 					if( (n = recvmsg(tempsockfd, &msgrecv, 0)) < 0){							
-						if(errno == ECONNREFUSED)
+						/*if(errno == ECONNREFUSED)
 							continue;						
 						else
-							err_sys("recvfrom error");
+							err_sys("recvfrom error 2");*/
+						continue;
 					}
 					
 					if(strcmp(command, "heart") == 0){		//收到心跳包
