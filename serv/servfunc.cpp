@@ -103,6 +103,7 @@ void save_cli(const struct job* currentjob)
 		err_sys("map lock failed");
 	map<string, struct user>::iterator it = usermap.find(cliname);
 	if(it != usermap.end()){
+		send(it->second.bind_fd, "offline", commandlen, 0);
 		close(it->second.bind_fd);
 		usermap.erase(it);
 	}

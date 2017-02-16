@@ -25,13 +25,24 @@
 #include <pthread.h>
 #include <sys/types.h>
 #include <ifaddrs.h>
+#include <sys/stat.h>
 
 struct file{
-	char filename[64];
+	int fd;
 	off_t filesize;
-
+	off_t offset;
+	pthread_t thread_id;
+	char fileowner[namelen];
+	char fileaddr[64];
 };
 
+struct file_arg{
+	int flag;		//1代表文件发送方，2代表文件接收方
+	int listenfd;
+	char name[namelen];
+	struct sockaddr_in peeraddr;
+	struct file myfile;
+};
 
 //客户结构体，包含客户的地址，名字，最后活跃时间
 struct user{

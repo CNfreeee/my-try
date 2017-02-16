@@ -15,7 +15,7 @@ pthread_cond_t condready = PTHREAD_COND_INITIALIZER;
 
 int main(int argc, char **argv)
 {
-	int sockfd;
+	int sockfd, listenfd;
 	long int i;
 	struct sockaddr_in servaddr,cliaddr;
 	struct msghdr msgrecv;
@@ -23,6 +23,7 @@ int main(int argc, char **argv)
 	char recvname[namelen];
 	struct sockaddr_in peerlocaladdr;
 	struct iovec iovrecv[3];
+	const int on = 1;
 	
 	/*struct sigaction SIGALRM_act;
 	SIGALRM_act.sa_handler = alarm_handler;
@@ -48,11 +49,13 @@ int main(int argc, char **argv)
 
 				//ipv4地址大小
 	if( (sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-		err_sys("socket error");
-	int defaultbuf;
-	socklen_t bufsize = sizeof(socklen_t);
-	getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &defaultbuf, &bufsize);
-	printf("udp默认接收缓冲区的大小是%d\n",defaultbuf);
+		err_sys("create udp socket error");
+	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket error");
+//	int defaultbuf;
+//	socklen_t bufsize = sizeof(socklen_t);
+//	getsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &defaultbuf, &bufsize);
+//	printf("udp默认接收缓冲区的大小是%d\n",defaultbuf);
 
 	bzero(&servaddr, sizeof(servaddr));
 	
@@ -60,21 +63,31 @@ int main(int argc, char **argv)
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	servaddr.sin_port        = htons(PORT-1);
 	
-	const int on = 1;
 	if(setsockopt(sockfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
 		err_sys("setsockopt error");
 	if(setsockopt(sockfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 
 
 	if(bind(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0)
 		err_sys("bind error");
+	if(bind(listenfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0)
+		err_sys("bind error");
 
+	if(listen(listenfd, 10) < 0)
+		err_sys("listen error");
 	if( (epollfd = epoll_create(servMAX_EVENTS)) == -1)			//注册事件
 		err_sys("epoll_create error");
 	ev.events = EPOLLIN;
 	ev.data.fd = sockfd;
 	if(epoll_ctl(epollfd, EPOLL_CTL_ADD, sockfd, &ev) == -1)
+		err_sys("epoll_ctl error");
+	ev.data.fd = listenfd;
+	if(epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
 		err_sys("epoll_ctl error");
 	
 	pthread_t *pth = (pthread_t*)malloc((threadsnum+1) * sizeof(pthread_t));
@@ -96,8 +109,11 @@ int main(int argc, char **argv)
 			err_sys("epoll_wait error");
 		}
 		for(m = 0; m < nfds; ++m){
-			if(events[m].data.fd == sockfd){
-				if(events[m].events & EPOLLIN){
+			if(events[m].data.fd == listenfd){
+				
+			}
+			else if(events[m].data.fd == sockfd){
+		//		if(events[m].events & EPOLLIN){
 					//bzero(command,sizeof(command));				//收到的数据不以'\0'结尾，需手动加上
 					bzero(recvname,sizeof(recvname));
 					if( (n = recvmsg(sockfd, &msgrecv, 0)) < 0){
@@ -146,7 +162,7 @@ int main(int argc, char **argv)
 					if(epoll_ctl(epollfd, EPOLL_CTL_ADD, newfd, &ev) == -1)
 						err_sys("epoll_ctl error");
 					
-				}
+		//		}
 			}
 			else{
 					tempsockfd = events[m].data.fd;

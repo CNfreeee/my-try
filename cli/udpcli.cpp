@@ -8,7 +8,7 @@ static int epollfd;
 static int sockfd;
 struct sockaddr_in servaddr;
 struct sockaddr_in localaddr;		//本地内网地址
-struct sockaddr_in outeraddr;		//路由转发的地址
+struct sockaddr_in outeraddr;		//NAT设备转发的地址
 struct epoll_event ev,events[cliMAX_EVENTS];
 map<string,struct user> usermap;
 static struct msghdr msgsend, msgrecv;		//同一时间不存在多个线程操作msgsend和msgrecv，所以可设为全局静态变量
@@ -99,7 +99,6 @@ int main(int argc, char **argv)
 	iovrecv[1].iov_base = recvline;
 	iovrecv[1].iov_len = sizeof(recvline);
 	
-	//alarm(10);
 
 	if( (epollfd = epoll_create(cliMAX_EVENTS)) == -1)			//注册事件
 		err_sys("epoll_create error");
@@ -144,7 +143,8 @@ int main(int argc, char **argv)
 					if(n == 0)
 						continue;
 					printf("recvmsg receive %ld bytes from sockfd\n",n);
-					parseRecv(n - sizeof(control));			//数据字节数,故要减去控制字段字节
+					printf("recvmsg receive %s control message\n",control);
+					parseRecv(n - sizeof(control), control, recvline);			//数据字节数,故要减去控制字段字节
 				}
 			}
 		}
@@ -206,6 +206,9 @@ void operate(char* control, size_t len1, char* mes, size_t len2)
 	else if(strcmp(control,"chat") == 0){
 		chat2one(control, len1, mes, len2);
 	}
+	else if(strcmp(control,"file") == 0){
+		file_request(control, len1, mes, len2);
+	}
 	else if(strcmp(control,"show") == 0){
 		show_users();
 	}
@@ -224,33 +227,33 @@ void operate(char* control, size_t len1, char* mes, size_t len2)
 void chat2one(char* control, size_t len1, char* mes, size_t len2)
 {
 	char *pos = NULL;
-	if((pos = strchr(mes,' ')) == NULL){
-		printf("unknown control message\n");	
-		return;
-	}	
 	int onlinenums = usermap.size();
-	ssize_t n = 0;
+	char peername[12] = {0};
+	struct sockaddr_in peeraddr;
+	struct sockaddr_in alteraddr;
 	if(onlinenums == 0){
 		printf("none is online\n");
 		return;
 	}
-	char peername[12] = {0};
+	if((pos = strchr(mes,' ')) == NULL){
+		printf("unknown control message\n");	
+		return;
+	}	
 	memcpy(peername,mes,pos-mes);
-	struct sockaddr_in peeraddr;
-	struct sockaddr_in alteraddr;
-	msgsend.msg_namelen = sizeof(peeraddr);	
-	iovsend[0].iov_base = control;
-	iovsend[0].iov_len = len1;
-	iovsend[1].iov_base = name;
-	iovsend[1].iov_len = namelen;
-	iovsend[2].iov_base = pos+1;
-	iovsend[2].iov_len = len2-(pos+1-mes);
 	string sname(peername);
 	map<string,struct user>::iterator it = usermap.find(sname);
 	if(it == usermap.end()){
 		printf("not such user\n");
 		return;
 	}
+	msgsend.msg_namelen = sizeof(peeraddr);
+	msgsend.msg_iovlen = 3;	
+	iovsend[0].iov_base = control;
+	iovsend[0].iov_len = len1;
+	iovsend[1].iov_base = name;
+	iovsend[1].iov_len = namelen;
+	iovsend[2].iov_base = pos+1;
+	iovsend[2].iov_len = len2-(pos+1-mes);
 	peeraddr = it->second.addr;
 	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
 		alteraddr = it->second.inner_addr;
@@ -259,17 +262,105 @@ void chat2one(char* control, size_t len1, char* mes, size_t len2)
 	else{
 		msgsend.msg_name = (struct sockaddr*)&peeraddr;	
 	}
-	if( (n = sendmsg(sockfd, &msgsend, 0)) < 0)
+	if(sendmsg(sockfd, &msgsend, 0) < 0)
 		err_sys("sendmsg to server error");
 	return;
 }
 
+void file_request(char* control, size_t len1, char* mes, size_t len2)
+{
+	char *pos = NULL;
+	int onlinenums = usermap.size();
+	int fd;
+	char peername[namelen] ={0};
+	struct file myfile;
+	struct stat buf;
+	struct sockaddr_in peeraddr;
+	struct sockaddr_in alteraddr;
+	if(onlinenums == 0){
+		printf("none is online\n");
+		return;
+	}
+	if((pos = strchr(mes,' ')) == NULL){
+		printf("unknown control message\n");	
+		return;
+	}
+	bzero(&myfile,sizeof(myfile));	
+	memcpy(myfile.fileowner, name, namelen);
+	memcpy(peername, mes, pos-mes);
+	string sname(peername);
+	map<string,struct user>::iterator it = usermap.find(sname);
+	if(it == usermap.end()){
+		printf("not such user\n");
+		return;
+	}
+	memcpy(myfile.fileaddr,pos+1,strlen(pos+1));
+	/*if(access(myfile.filename,F_OK) != 0){
+		printf("no such file\n");
+		return;
+	}*/
+	if( (fd = open(myfile.fileaddr, O_RDONLY)) < 0)	//打开想要传输的文件,之后要记得关闭
+		printf("no such file\n");
+	myfile.fd = fd;
+	if( fstat(fd, &buf) < 0)			//获取文件的stat结构，里面有文件大小信息
+		err_sys("fstat error");
+	myfile.filesize = buf.st_size;
+	printf("file size is %lu, fd is %d\n",myfile.filesize, fd);
+	msgsend.msg_namelen = sizeof(peeraddr);	
+	msgsend.msg_iovlen = 2;
+//	iovsend[0].iov_base = control;
+	iovsend[0].iov_len = len1;
+	//iovsend[1].iov_base = name;
+	//iovsend[1].iov_len = namelen;
+	iovsend[1].iov_base = &myfile;
+	iovsend[1].iov_len = sizeof(myfile);
+	peeraddr = it->second.addr;
+	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
+		struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));		
+		int listenfd;
+		char str[6] = {0};
+		struct sockaddr_in bindaddr;
+		socklen_t len = sizeof(bindaddr);
+		bzero(&bindaddr,sizeof(bindaddr));
+		bindaddr.sin_family = AF_INET;
+		bindaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+		bindaddr.sin_port = htons(0);
+		if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+			err_sys("create listenfd error\n");
+		my_arg->flag = 1;
+		my_arg->listenfd = listenfd;
+		memcpy(&(my_arg->myfile), &myfile, sizeof(myfile));
+		if(bind(listenfd, (struct sockaddr*) &bindaddr, sizeof(bindaddr)) < 0)
+			err_sys("bind error\n");
+		if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
+			err_sys("getsockname failed\n");
 
+	
+
+		printf("tcpfd is %d\n",listenfd);
+		alteraddr = it->second.inner_addr;
+		sprintf(str, "%d", bindaddr.sin_port);
+		strcat(control,str);
+		printf("after strcat, the control is %s\n",control);
+		iovsend[0].iov_base = control;
+		msgsend.msg_name = (struct sockaddr*)&alteraddr;
+		if(listen(listenfd, 5) < 0)
+			err_sys("listen error 1\n");
+		pthread_create(&myfile.thread_id, NULL, thread_listen, (void*)my_arg);
+	}
+	else{							//不处于同一局域网，有两种情况，第一种是本机在公网上，另一种是本机在另外一个局域网中
+		//未写完
+		msgsend.msg_name = (struct sockaddr*)&peeraddr;	
+	}
+	if(sendmsg(sockfd, &msgsend, 0) < 0)
+		err_sys("sendmsg to server error");
+	return;
+
+}
 
 void chat2all(char* control, size_t len1, char* mes, size_t len2)
 {	
 	int onlinenums = usermap.size();
-	ssize_t n = 0;
 	if(onlinenums == 0){
 		printf("none is online\n");
 		return;
@@ -277,6 +368,7 @@ void chat2all(char* control, size_t len1, char* mes, size_t len2)
 	struct sockaddr_in peeraddr;
 	struct sockaddr_in alteraddr;
 	msgsend.msg_namelen = sizeof(peeraddr);	
+	msgsend.msg_iovlen = 3;
 	iovsend[0].iov_base = control;
 	iovsend[0].iov_len = len1;
 	iovsend[1].iov_base = name;
@@ -301,7 +393,7 @@ void chat2all(char* control, size_t len1, char* mes, size_t len2)
 				err_sys("inet_ntop error");
 		}
 		printf("send message to %s: %hu \n",addrstr, ntohs(((struct sockaddr_in*)msgsend.msg_name)->sin_port));	//网络字节序转成主机字节序显示
-		if( (n = sendmsg(sockfd, &msgsend, 0)) < 0)
+		if(sendmsg(sockfd, &msgsend, 0) < 0)
 			err_sys("sendmsg to server error");	
 	}	
 	pthread_mutex_unlock(&maplock);
@@ -375,23 +467,102 @@ int parseInput(char *input, char control[], size_t control_size, char *rest_inpu
 	return -1;
 }
 	
-void parseRecv(ssize_t n)
+void parseRecv(ssize_t n, char *control, char *recvline)
 {
-	if(strcmp((char*)iovrecv[0].iov_base,"login") == 0 || strcmp((char*)iovrecv[0].iov_base,"update") == 0){
+	if(strcmp(control,"login") == 0 || strcmp(control,"update") == 0){
 		update_map(n);
 	}
-	else if(strcmp((char*)iovrecv[0].iov_base,"chatall") == 0 || strcmp((char*)iovrecv[0].iov_base,"chat") == 0){	//iovrecv[1]的前12个字节是发送端的名字
+	else if(strcmp(control,"chatall") == 0 || strcmp(control,"chat") == 0){	//iovrecv[1]的前12个字节是发送端的名字
 		char fromwho[namelen];
-		memcpy(fromwho,iovrecv[1].iov_base,12);
-		printf("%s:%s\n",fromwho,(char*)(iovrecv[1].iov_base)+12);
+		memcpy(fromwho, recvline, namelen);
+		printf("%s:%s\n",fromwho,(char*)iovrecv[1].iov_base + namelen);
 	}
-	else if(strcmp((char*)iovrecv[0].iov_base,"try") == 0){
+	else if(strcmp(control,"file") == 0){
+		char fromwho[namelen];
+		char reply[12] ={0};
+		memcpy(fromwho,recvline, namelen);
+		printf("%s want to send you a file named \"%s\", yes or no\n", fromwho, recvline + namelen);
+		fgets(reply,12,stdin);
+		reply[strlen(reply)-1] = '\0';
+		string s(fromwho);
+		map<string, struct user>::iterator it = usermap.find(s);
+		if(strcmp(reply, "yes") == 0){
+			printf("yes\n");
+			int* tcpfd = (int*)malloc(sizeof(int)); 
+		}
+	}
+	else if(strncmp(control,"file",4) == 0){			//此情况下对端判断自己可以被连接到，已经处于监听状态
+		struct file peerfile;
+		struct sockaddr_in peeraddr, tempaddr;
+		char reply[12] ={0};
+		int port;
+		char str[6];
+		memcpy(&peerfile,recvline, sizeof(peerfile));
+		printf("%s want to send you a file named \"%s\", yes or no\n", peerfile.fileowner, peerfile.fileaddr);
+		fgets(reply,12,stdin);
+		reply[strlen(reply)-1] = '\0';
+		string s(peerfile.fileowner);
+		map<string, struct user>::iterator it = usermap.find(s);
+		if(it == usermap.end()){
+			printf("shouldn't be here\n");
+			return;
+		}
+		peeraddr = it->second.addr;
+		if(strcmp(reply, "yes") == 0){
+			struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+			memcpy(str, control+4, strlen(control+4));
+			port = atoi(str);
+			if(peeraddr.sin_addr.s_addr == outeraddr.sin_addr.s_addr){	//在同一个局域网
+				tempaddr = it->second.inner_addr;
+				tempaddr.sin_port = port;
+			}
+			else{
+				tempaddr = peeraddr;
+				tempaddr.sin_port = port;
+			}
+			my_arg->peeraddr = tempaddr;
+			printf("listen port of network byte order is %d\n", port);
+			pthread_t tid;
+			pthread_create(&tid, NULL, thread_connect, (void*)my_arg);
+		}
+		else{
+			char refuse[commandlen] = "nofile";
+			pthread_t pth = peerfile.thread_id;
+			printf("peer thread id is %lu\n", pth);
+			msgsend.msg_iovlen = 2;
+			iovsend[0].iov_base = refuse;
+			iovsend[0].iov_len = commandlen;
+			iovsend[1].iov_base = &pth;
+			iovsend[1].iov_len = sizeof(pthread_t);
+			
+			if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
+				tempaddr = it->second.inner_addr;
+				msgsend.msg_name = (struct sockaddr*)&tempaddr;
+			}
+			else{
+				msgsend.msg_name = (struct sockaddr*)&peeraddr;	
+			}
+			if(sendmsg(sockfd, &msgsend, 0) < 0)
+				err_sys("sendmsg to server error");
+
+		}
+	}
+	/*else if(strcmp((char*)iovrecv[0].iov_base,"try") == 0){
 		printf("unexpected try control\n");		
 		//control字段为try表示udp打洞消息不过应该永远都收不到这个消息才对
+	}*/
+	else if(strcmp(control,"nofile") == 0){
+		pthread_t thread_id;
+		memcpy(&thread_id,recvline, sizeof(pthread_t));
+		printf("my thread id is %lu\n", thread_id);
+		if(pthread_cancel(thread_id) < 0)
+			err_sys("pthread_cancel failed\n");
 	}
-	else if(strcmp((char*)iovrecv[0].iov_base,"delete") == 0)
-		delete_user((char*)iovrecv[1].iov_base);
-	else if(strcmp((char*)iovrecv[0].iov_base,"add") == 0)
+	else if(strcmp(control,"offline") == 0)
+		exit(2);
+	else if(strcmp(control,"delete") == 0)
+		delete_user(recvline);
+	else if(strcmp(control,"add") == 0)
 		add_user();	
 //	else
 //		printf("unknown receive\n");
@@ -478,4 +649,59 @@ void interrupt_handler(int signo)
 {
 	exit(10);
 
+}
+
+void *thread_listen(void *arg)
+{
+	int connfd;
+	char buf[MAXLINE] = "tcp success";
+	pthread_detach(pthread_self());
+	pthread_cleanup_push(listen_cleanup, arg);
+	printf("socket %d start listen\n",((struct file_arg*)arg)->listenfd);
+	if( (connfd = accept(((struct file_arg*)arg)->listenfd, NULL, NULL)) < 0)
+		err_sys("accept error 1\n");
+	printf("write %ld bytes\n",write(connfd, buf, strlen(buf)));
+	close(connfd);
+	pthread_cleanup_pop(1);
+	pthread_exit((void*)1);
+}
+
+void *thread_connect(void *arg)
+{
+	int connfd;
+	char recvbuf[MAXLINE] = {0};
+	pthread_detach(pthread_self());
+	pthread_cleanup_push(connect_cleanup, arg);
+	
+	if((connfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket error 2\n");
+	struct sockaddr_in tcpaddr = ((struct file_arg*)arg)->peeraddr;
+	if(connect(connfd, (struct sockaddr*)&tcpaddr, sizeof(struct sockaddr_in)) != 0)
+		err_sys("connect error 2\n");
+	int n;
+	if( (n = read(connfd, recvbuf, MAXLINE)) < 0)
+		err_sys("read error\n");
+
+	printf("read %d bytes\n",n);
+	fputs(recvbuf, stdout);
+	close(connfd);
+	pthread_cleanup_pop(1);
+	pthread_exit((void*)1);
+	
+}
+
+void listen_cleanup(void *arg)
+{
+	printf("step in listen cleanup\n");
+	close(((struct file_arg*)arg)->listenfd);
+	close(((struct file_arg*)arg)->myfile.fd);
+	free(arg);
+	return;
+}
+
+void connect_cleanup(void *arg)
+{
+	printf("step in connect cleanup\n");
+	free(arg);
+	return;
 }
