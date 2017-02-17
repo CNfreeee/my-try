@@ -2,7 +2,11 @@
 extern "C"{
 #include "../common.h"
 }
-
+#include <map>
+#include <string>
+#include <iostream>
+using std::string;
+using std::map;
 void getlocalip();
 void update_map(ssize_t);
 int parseInput(char*, char*, size_t, char*);		//参数分别是键盘输入，存放解析后命令的buf，buf的大小
@@ -24,3 +28,14 @@ void *thread_connect(void*);
 void listen_cleanup(void*);
 void connect_cleanup(void*);
 
+extern int sockfd;
+extern struct msghdr msgsend, msgrecv;		
+extern struct iovec iovsend[3], iovrecv[2];
+extern char name[namelen+2];				
+extern string string_name;
+extern pthread_mutex_t maplock;
+extern struct sockaddr_in servaddr;
+extern struct sockaddr_in localaddr;		
+extern struct sockaddr_in outeraddr;		
+extern struct epoll_event ev,events[cliMAX_EVENTS];
+extern map<string,struct user> usermap;

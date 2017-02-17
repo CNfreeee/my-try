@@ -1,21 +1,18 @@
 #include "clifunc.h"
-#include <map>
-#include <string>
-#include <iostream>
-using std::string;
-using std::map;
+
+
 static int epollfd;
-static int sockfd;
+int sockfd;
 struct sockaddr_in servaddr;
 struct sockaddr_in localaddr;		//本地内网地址
 struct sockaddr_in outeraddr;		//NAT设备转发的地址
 struct epoll_event ev,events[cliMAX_EVENTS];
 map<string,struct user> usermap;
-static struct msghdr msgsend, msgrecv;		//同一时间不存在多个线程操作msgsend和msgrecv，所以可设为全局静态变量
-static struct iovec iovsend[3], iovrecv[2];
-static char name[namelen+2];				//本地登录名
-static string string_name;
-static pthread_mutex_t maplock = PTHREAD_MUTEX_INITIALIZER;
+struct msghdr msgsend, msgrecv;		//同一时间不存在多个线程操作msgsend和msgrecv，所以可设为全局静态变量
+struct iovec iovsend[3], iovrecv[2];
+char name[namelen+2];				//本地登录名
+string string_name;
+pthread_mutex_t maplock = PTHREAD_MUTEX_INITIALIZER;
 
 
 
@@ -157,115 +154,11 @@ int main(int argc, char **argv)
 
 
 
-void inform_server()
-{
-	char command[commandlen] = {0};
-	int c;
-	printf("please input your login name\n");
-	for(;;){
-		fgets(name, sizeof(name), stdin);
-		if(strlen(name) > namelen){
-			printf("login name too long, input again\n");
-			//fflush(stdin);				//不能用fflush清洗输入流
-			while((c = getchar()) != '\n' && c != EOF);
-		}
-		else{
-			name[strlen(name)-1] = 0;		//把换行符置0
-			break;
-		}
-	}
-	string_name = name;
-	std::cout << string_name << "*******" << std::endl;
-	strcpy(command,"login");
-	printf("your name is %s *** and its length is %lu\n", name, strlen(name));
-	printf("connecting ...\n");
-	if(sendto(sockfd, "try connect" ,commandlen, 0, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)	//让系统给该套接字分配一个临时的端口号
-		err_sys("sendto failed\n");
-	socklen_t len = sizeof(localaddr);
-	if(getsockname(sockfd, (struct sockaddr*)&localaddr, &len) < 0)
-		err_sys("getsockname failed");
-	char addr[16] = {0};
-	inet_ntop(AF_INET, &localaddr.sin_addr, addr, 16);
-	printf("local port is %s:%hu\n",addr,ntohs(localaddr.sin_port));
-	req2serv(command, sizeof(command), name, namelen);			//第四个参数取决于服务器接收端的第二个buf
-}
-
-//根据control字段决定发给谁，发什么
-void operate(char* control, size_t len1, char* mes, size_t len2)
-{
-	//if(strcmp(control,"update") == 0){
-	//	req2serv(control, len1, mes, len2);
-	//}
-	if(strcmp(control,"quit") == 0){
-		req2serv(control,len1,name,namelen);
-		exit(5);
-	}
-	else if(strcmp(control,"chatall") == 0){
-		chat2all(control, len1, mes, len2);
-	}
-	else if(strcmp(control,"chat") == 0){
-		chat2one(control, len1, mes, len2);
-	}
-	else if(strcmp(control,"file") == 0){
-		file_request(control, len1, mes, len2);
-	}
-	else if(strcmp(control,"show") == 0){
-		show_users();
-	}
-	else if(strcmp(control,"help") == 0){
-		printf("command \"show\" will show you which users are online\n");
-		printf("command \"chat somebody something\" will send something to a specific one\n");
-		printf("command \"chatall something\" will send something to all online users\n");
-	//	printf("command \"update\" will request server to update online user list\n");
-	}
-	else
-		printf("unknown control message\n");
 
 
-}
 
-void chat2one(char* control, size_t len1, char* mes, size_t len2)
-{
-	char *pos = NULL;
-	int onlinenums = usermap.size();
-	char peername[12] = {0};
-	struct sockaddr_in peeraddr;
-	struct sockaddr_in alteraddr;
-	if(onlinenums == 0){
-		printf("none is online\n");
-		return;
-	}
-	if((pos = strchr(mes,' ')) == NULL){
-		printf("unknown control message\n");	
-		return;
-	}	
-	memcpy(peername,mes,pos-mes);
-	string sname(peername);
-	map<string,struct user>::iterator it = usermap.find(sname);
-	if(it == usermap.end()){
-		printf("not such user\n");
-		return;
-	}
-	msgsend.msg_namelen = sizeof(peeraddr);
-	msgsend.msg_iovlen = 3;	
-	iovsend[0].iov_base = control;
-	iovsend[0].iov_len = len1;
-	iovsend[1].iov_base = name;
-	iovsend[1].iov_len = namelen;
-	iovsend[2].iov_base = pos+1;
-	iovsend[2].iov_len = len2-(pos+1-mes);
-	peeraddr = it->second.addr;
-	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
-		alteraddr = it->second.inner_addr;
-		msgsend.msg_name = (struct sockaddr*)&alteraddr;
-	}
-	else{
-		msgsend.msg_name = (struct sockaddr*)&peeraddr;	
-	}
-	if(sendmsg(sockfd, &msgsend, 0) < 0)
-		err_sys("sendmsg to server error");
-	return;
-}
+
+
 
 void file_request(char* control, size_t len1, char* mes, size_t len2)
 {
@@ -361,114 +254,12 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 
 }
 
-void chat2all(char* control, size_t len1, char* mes, size_t len2)
-{	
-	int onlinenums = usermap.size();
-	if(onlinenums == 0){
-		printf("none is online\n");
-		return;
-	}
-	struct sockaddr_in peeraddr;
-	struct sockaddr_in alteraddr;
-	msgsend.msg_namelen = sizeof(peeraddr);	
-	msgsend.msg_iovlen = 3;
-	iovsend[0].iov_base = control;
-	iovsend[0].iov_len = len1;
-	iovsend[1].iov_base = name;
-	iovsend[1].iov_len = namelen;
-	iovsend[2].iov_base = mes;
-	iovsend[2].iov_len = len2;
-	
-	pthread_mutex_lock(&maplock);
-	map<string,struct user>::iterator it;
-	for(it = usermap.begin(); it != usermap.end(); ++it){	
-		peeraddr = it->second.addr;
-		char addrstr[16] = {0};
-		if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
-			alteraddr = it->second.inner_addr;
-			msgsend.msg_name = (struct sockaddr*)&alteraddr;
-			if(inet_ntop(AF_INET,&alteraddr.sin_addr,addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
-				err_sys("inet_ntop error");
-		}
-		else{
-			msgsend.msg_name = (struct sockaddr*)&peeraddr;	
-			if(inet_ntop(AF_INET,&peeraddr.sin_addr,addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
-				err_sys("inet_ntop error");
-		}
-		printf("send message to %s: %hu \n",addrstr, ntohs(((struct sockaddr_in*)msgsend.msg_name)->sin_port));	//网络字节序转成主机字节序显示
-		if(sendmsg(sockfd, &msgsend, 0) < 0)
-			err_sys("sendmsg to server error");	
-	}	
-	pthread_mutex_unlock(&maplock);
-}
-
-void show_users()
-{
-	int onlinenums = usermap.size();
-	if(onlinenums == 0){
-		printf("none is online\n");
-		return;
-	}
-	map<string,struct user>::iterator it;
-	printf("existing users are: ");
-
-	pthread_mutex_lock(&maplock);
-	for(it = usermap.begin(); it!=usermap.end(); ++it){
-		printf("%s, ",it->second.name);
-	}
-	pthread_mutex_unlock(&maplock);
-	printf("\n");
-
-}
 
 
 
-void req2serv(char* control, size_t len1, char* mes, size_t len2)
-{
-	msgsend.msg_name = (struct sockaddr*)&servaddr;
-	msgsend.msg_namelen = sizeof(servaddr);
-	ssize_t n = 0;	
-	iovsend[0].iov_base = control;
-	iovsend[0].iov_len = len1;
-	iovsend[1].iov_base = mes;
-	iovsend[1].iov_len = len2;
-	if(strcmp(control, "login") == 0){		//要发送本地内网地址
-		getlocalip();
-		printf("local ip is %s:%d\n", inet_ntoa(localaddr.sin_addr),ntohs(localaddr.sin_port));
-		iovsend[2].iov_base = &localaddr;
-		iovsend[2].iov_len = sizeof(localaddr);
-	} 
-	if( (n = sendmsg(sockfd, &msgsend, 0)) < 0)
-		err_sys("sendmsg to server error");
-}
 
 
 
-//解析键盘输入,-1表示控制字段不正确，0表示正确
-int parseInput(char *input, char control[], size_t control_size, char *rest_input)
-{
-	char *pos = NULL;
-	int i;
-	if((pos = strchr(input,' ')) != NULL){	
-		if((pos-input) > (control_size - 1))
-			return -1;
-		for(i = 0; input[i]!= ' '; ++i){
-			control[i] = input[i];
-		}
-		control[i] = 0;									//terminal null
-		strcpy(rest_input, pos+1);
-		rest_input[strlen(rest_input)-1] = 0;
-		return 0;
-	}
-	else{
-		if(strlen(input) > control_size)
-			return -1;
-		input[strlen(input)-1] = 0;					//用空字符覆盖换行符
-		strcpy(control, input);			
-		return 0;
-	}
-	return -1;
-}
 	
 void parseRecv(ssize_t n, char *control, char *recvline)
 {
@@ -499,7 +290,7 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		struct sockaddr_in peeraddr, tempaddr;
 		char reply[12] ={0};
 		int port;
-		char str[6];
+		char str[6] = {0};
 		memcpy(&peerfile,recvline, sizeof(peerfile));
 		printf("%s want to send you a file named \"%s\", yes or no\n", peerfile.fileowner, peerfile.fileaddr);
 		fgets(reply,12,stdin);
@@ -574,10 +365,10 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 void update_map(ssize_t n)
 {
 	unsigned long int num = n/sizeof(struct user);
-	printf("n is %lu and the num of user is %lu\n",n,num);
 	struct user tempuser;
 	unsigned int i;
 	char control[commandlen] = "try";
+	printf("n is %lu and the num of user is %lu\n",n,num);
 	std::pair< map<string, struct user>::iterator,bool> ret;	//用来判断是否插入成功，如果插入成功，说明是新用户，则需要发送udp打洞探测包
 	pthread_mutex_lock(&maplock);
 	for(i = 0; i < num; i++){
@@ -615,21 +406,6 @@ void add_user()
 	printf("%s is online\n",tempuser.name);
 }
 
-void getlocalip()
-{
-	struct ifaddrs *ifaddr,*ifa;
-	if(getifaddrs(&ifaddr) == -1)
-		err_sys("getifaddrs failed");
-	for(ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next){
-		if(ifa->ifa_addr == NULL)				
-			continue;
-		if(ifa->ifa_addr->sa_family == AF_INET && (strcmp(ifa->ifa_name,"lo") != 0)){	//保存非环回地址的ipv4地址
-			struct sockaddr_in *ipAddr = (struct sockaddr_in *)ifa->ifa_addr;
-			localaddr.sin_addr = ipAddr->sin_addr;
-		}
-	}
-	freeifaddrs(ifaddr);
-}
 
 void delete_user(char* target_name)
 {
