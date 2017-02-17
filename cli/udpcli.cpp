@@ -27,11 +27,11 @@ void* thread_heart(void* arg)
 	int time_count = 0;
 	memcpy(message, control, commandlen);
 	memcpy(message+commandlen, name, namelen);
-	sleep(1);
+	sleep(5);
 	for(;;){
 		sendto(sockfd, message, sizeof(message), 0, (struct sockaddr*)&servaddr, sizeof(servaddr));
 		++time_count;
-		if(time_count > 60){
+		if(time_count > 12){
 			map<string, struct user>::iterator it;
 			pthread_mutex_lock(&maplock);
 			for(it = usermap.begin(); it != usermap.end(); ++it){
@@ -352,6 +352,7 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 	}
 	else{							//不处于同一局域网，有两种情况，第一种是本机在公网上，另一种是本机在另外一个局域网中
 		//未写完
+		iovsend[0].iov_base = control;
 		msgsend.msg_name = (struct sockaddr*)&peeraddr;	
 	}
 	if(sendmsg(sockfd, &msgsend, 0) < 0)
