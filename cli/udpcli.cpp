@@ -299,8 +299,10 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 		printf("no such file\n");
 		return;
 	}*/
-	if( (fd = open(myfile.fileaddr, O_RDONLY)) < 0)	//打开想要传输的文件,之后要记得关闭
+	if( (fd = open(myfile.fileaddr, O_RDONLY)) < 0){		//打开想要传输的文件,之后要记得关闭
 		printf("no such file\n");
+		return;
+	}
 	if( fstat(fd, &buf) < 0)			//获取文件的stat结构，里面有文件大小信息
 		err_sys("fstat error");
 	myfile.filesize = buf.st_size;
@@ -686,7 +688,7 @@ void *thread_listen(void *arg)
 		}
 		leftbytes = leftbytes - nread;
 		if(write(connfd, sendbuf, nread) != nread)
-			err_sys("write error");
+			goto end;	//说明对端异常关闭
 	}
 end:	close(connfd);
 	pthread_cleanup_pop(1);
@@ -724,15 +726,17 @@ void *thread_connect(void *arg)
 		strcpy(filename,myfile.fileaddr);
 	
 	if(access(filename,F_OK) == 0){		//存在
-		if( (newfd = open(filename, O_RDONLY|O_APPEND)) < 0)	//打开想要传输的文件
+		if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
 			err_sys("open error");
 		if( fstat(newfd, &buf) < 0)			
 			err_sys("fstat error");
 		offset = buf.st_size;
 		if( offset >= myfile.filesize)
 			goto end;
-		else 
-			write(connfd, &offset, sizeof(off_t));
+		else{
+			if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
+				goto end;
+		}
 	}
 	else{
 		if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
@@ -746,10 +750,14 @@ void *thread_connect(void *arg)
 		if(leftbytes > MAXLINE){
 			if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
 				err_sys("read error");
+			else if(nread == 0)
+				goto end;
 		}
 		else{
 			if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
 				err_sys("read error");
+			else if(nread == 0)
+				goto end;
 		}
 		leftbytes = leftbytes - nread;
 		if(write(newfd, recvbuf, nread) != nread)
