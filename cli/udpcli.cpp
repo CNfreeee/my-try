@@ -196,6 +196,7 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 		printf("no such file\n");
 		return;
 	}
+	myfile.fd = fd;
 	if( fstat(fd, &buf) < 0)			//获取文件的stat结构，里面有文件大小信息
 		err_sys("fstat error");
 	myfile.filesize = buf.st_size;
@@ -209,7 +210,8 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 	iovsend[1].iov_base = &myfile;
 	iovsend[1].iov_len = sizeof(myfile);
 	peeraddr = it->second.addr;
-	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
+	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr || outeraddr.sin_addr.s_addr == localaddr.sin_addr.s_addr){	
+		//发送端和本机处于同一局域网或发送端处于公网,此情况会直接开始监听，并将监听端口发送到对端
 		struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));		
 		int listenfd;
 		char str[6] = {0};
@@ -233,7 +235,11 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 	
 
 		printf("tcpfd is %d\n",listenfd);
-		alteraddr = it->second.inner_addr;
+		if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr)
+			alteraddr = it->second.inner_addr;
+		else
+			alteraddr = it->second.addr;
+		myfile.addr = localaddr;			//无论发送端与接收端处于同一局域网还是发送端处于公网，发送端能访问到的地址都是localaddr
 		sprintf(str, "%d", bindaddr.sin_port);
 		strcat(control,str);
 		printf("after strcat, the control is %s\n",control);
@@ -243,9 +249,10 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 			err_sys("listen error 1\n");
 		pthread_create(&myfile.thread_id, NULL, thread_listen, (void*)my_arg);
 	}
-	else{							//不处于同一局域网，有两种情况，第一种是本机在公网上，另一种是本机在另外一个局域网中
+	else{							//本机在另外一个局域网中
 		//未写完
 		iovsend[0].iov_base = control;
+		myfile.addr = outeraddr;
 		msgsend.msg_name = (struct sockaddr*)&peeraddr;	
 	}
 	if(sendmsg(sockfd, &msgsend, 0) < 0)
@@ -271,86 +278,161 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		memcpy(fromwho, recvline, namelen);
 		printf("%s:%s\n",fromwho,(char*)iovrecv[1].iov_base + namelen);
 	}
-	else if(strcmp(control,"file") == 0){
-		char fromwho[namelen];
+	else if(strcmp(control,"file") == 0){					//此情况下对端不可被直接连接到
+		struct file peerfile;
+		struct sockaddr_in peeraddr;
 		char reply[12] ={0};
-		memcpy(fromwho,recvline, namelen);
-		printf("%s want to send you a file named \"%s\", yes or no\n", fromwho, recvline + namelen);
-		fgets(reply,12,stdin);
-		reply[strlen(reply)-1] = '\0';
-		string s(fromwho);
-		map<string, struct user>::iterator it = usermap.find(s);
-		if(strcmp(reply, "yes") == 0){
-			printf("yes\n");
-			int* tcpfd = (int*)malloc(sizeof(int)); 
+		memcpy(&peerfile, recvline, sizeof(peerfile));
+		if(strcmp(peerfile.fileowner,name) == 0 ){			//此情况说明自己是文件传输的发起方，并且两方都无法被连接，此时需要进行tcp打洞
+		
+		
+		}
+		else {
+			printf("%s want to send you a file named \"%s\", yes or no\n", peerfile.fileowner, peerfile.fileaddr);
+			fgets(reply,12,stdin);
+			reply[strlen(reply)-1] = '\0';
+//			string s(peerfile.fileowner);
+//			map<string, struct user>::iterator it = usermap.find(s);
+//			if(it == usermap.end()){
+//				printf("shouldn't be here\n");
+//				return;
+//			}
+			peeraddr = peerfile.addr;
+			if(strcmp(reply, "yes") == 0){				
+				if(outeraddr.sin_addr.s_addr == localaddr.sin_addr.s_addr){				//本端处于公网
+					struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));		
+					int listenfd;
+					char str[6] = {0};
+					struct sockaddr_in bindaddr;
+					peerfile.addr = outeraddr;			//这里要修改addr，给对端连接自己用
+					socklen_t len = sizeof(bindaddr);
+					bzero(&bindaddr,sizeof(bindaddr));
+					bindaddr.sin_family = AF_INET;
+					bindaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+					bindaddr.sin_port = htons(0);
+					if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+						err_sys("create listenfd error\n");
+					my_arg->flag = 2;								//很关键，表明该线程是接收端
+					my_arg->listenfd = listenfd;
+					if(bind(listenfd, (struct sockaddr*) &bindaddr, sizeof(bindaddr)) < 0)
+						err_sys("bind error\n");
+					if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
+						err_sys("getsockname failed\n");
+					printf("tcpfd is %d\n",listenfd);
+					sprintf(str, "%d", bindaddr.sin_port);
+					strcat(control, str);
+					printf("after strcat, the control is %s\n",control);
+					if(listen(listenfd, 5) < 0)
+						err_sys("listen error 2\n");
+					pthread_t ptid;
+					pthread_create(&ptid, NULL, thread_listen, (void*)my_arg);
+					msgsend.msg_iovlen = 2;
+					iovsend[0].iov_base = control;
+					iovsend[0].iov_len = commandlen;
+					iovsend[1].iov_base = &peerfile;
+					iovsend[1].iov_len = sizeof(peerfile);
+					msgsend.msg_name = (struct sockaddr*)&peeraddr;	
+					if(sendmsg(sockfd, &msgsend, 0) < 0)
+						err_sys("sendmsg to server error");
+
+				}
+			}
+			else{					//倘若拒绝接收
+				char refuse[commandlen] = "nofile2";
+				int fd = peerfile.fd;
+				msgsend.msg_iovlen = 2;
+				iovsend[0].iov_base = refuse;
+				iovsend[0].iov_len = commandlen;
+				iovsend[1].iov_base = &fd;
+				iovsend[1].iov_len = sizeof(int);
+				msgsend.msg_name = (struct sockaddr*)&(peerfile.addr);	
+				if(sendmsg(sockfd, &msgsend, 0) < 0)
+					err_sys("sendmsg error1");
+			}
 		}
 	}
 	else if(strncmp(control,"file",4) == 0){			//此情况下对端判断自己可以被连接到，已经处于监听状态
 		struct file peerfile;
-		struct sockaddr_in peeraddr, tempaddr;
+		struct sockaddr_in listenaddr;
 		char reply[12] ={0};
 		int port;
 		char str[6] = {0};
 		memcpy(&peerfile,recvline, sizeof(peerfile));
-		printf("%s want to send you a file named \"%s\", yes or no\n", peerfile.fileowner, peerfile.fileaddr);
-		fgets(reply,12,stdin);
-		reply[strlen(reply)-1] = '\0';
-		string s(peerfile.fileowner);
-		map<string, struct user>::iterator it = usermap.find(s);
-		if(it == usermap.end()){
-			printf("shouldn't be here\n");
-			return;
-		}
-		peeraddr = it->second.addr;
-		if(strcmp(reply, "yes") == 0){
-			struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
-			my_arg->flag = 2;
-			memcpy(str, control+4, strlen(control+4));
-			port = atoi(str);
-			if(peeraddr.sin_addr.s_addr == outeraddr.sin_addr.s_addr){	//在同一个局域网
-				tempaddr = it->second.inner_addr;
-				tempaddr.sin_port = port;
-			}
-			else{
-				tempaddr = peeraddr;
-				tempaddr.sin_port = port;
-			}
-			my_arg->peeraddr = tempaddr;
-			pthread_t tid;
-			pthread_create(&tid, NULL, thread_connect, (void*)my_arg);
+		listenaddr = peerfile.addr;
+		if(strcmp(peerfile.fileowner,name) == 0 ){			//此情况说明自己是文件传输的发起方，并且对端可以被连接
+				struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+				memcpy(&(my_arg->myfile), &peerfile, sizeof(peerfile));
+				my_arg->flag = 1;
+				my_arg->fd = peerfile.fd;
+				memcpy(str, control+4, strlen(control+4));
+				port = atoi(str);
+				listenaddr.sin_port = port;				//listenaddr与peerfile.addr的端口号不一样
+				my_arg->peeraddr = listenaddr;
+				pthread_t tid;
+				pthread_create(&tid, NULL, thread_connect, (void*)my_arg);
 		}
 		else{
-			char refuse[commandlen] = "nofile";
-			pthread_t pth = peerfile.thread_id;
-			printf("peer thread id is %lu\n", pth);
-			msgsend.msg_iovlen = 2;
-			iovsend[0].iov_base = refuse;
-			iovsend[0].iov_len = commandlen;
-			iovsend[1].iov_base = &pth;
-			iovsend[1].iov_len = sizeof(pthread_t);
-			
-			if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
-				tempaddr = it->second.inner_addr;
-				msgsend.msg_name = (struct sockaddr*)&tempaddr;
+			printf("%s want to send you a file named \"%s\", yes or no\n", peerfile.fileowner, peerfile.fileaddr);
+			fgets(reply,12,stdin);
+			reply[strlen(reply)-1] = '\0';
+			if(strcmp(reply, "yes") == 0){
+				struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+				my_arg->flag = 2;
+				memcpy(str, control+4, strlen(control+4));
+				port = atoi(str);
+				/*if(peeraddr.sin_addr.s_addr == outeraddr.sin_addr.s_addr){	//在同一个局域网
+					tempaddr = it->second.inner_addr;
+					tempaddr.sin_port = port;
+				}
+				else{
+					tempaddr = peeraddr;
+					tempaddr.sin_port = port;
+				}*/
+				listenaddr.sin_port = port;				//listenaddr与peerfile.addr的端口号不一样
+				my_arg->peeraddr = listenaddr;
+				pthread_t tid;
+				pthread_create(&tid, NULL, thread_connect, (void*)my_arg);
 			}
 			else{
-				msgsend.msg_name = (struct sockaddr*)&peeraddr;	
+				char refuse[commandlen] = "nofile1";
+				pthread_t pth = peerfile.thread_id;
+				//printf("peer thread id is %lu\n", pth);
+				msgsend.msg_iovlen = 2;
+				iovsend[0].iov_base = refuse;
+				iovsend[0].iov_len = commandlen;
+				iovsend[1].iov_base = &pth;
+				iovsend[1].iov_len = sizeof(pthread_t);
+			
+			/*	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr){	//发送端和本机处于同一局域网
+					tempaddr = it->second.inner_addr;
+					msgsend.msg_name = (struct sockaddr*)&tempaddr;
+				}
+				else{
+					msgsend.msg_name = (struct sockaddr*)&peeraddr;	
+				}*/
+				msgsend.msg_name = (struct sockaddr*)&(peerfile.addr);	
+				if(sendmsg(sockfd, &msgsend, 0) < 0)
+					err_sys("sendmsg error 2");
+	
 			}
-			if(sendmsg(sockfd, &msgsend, 0) < 0)
-				err_sys("sendmsg to server error");
-
 		}
 	}
 	/*else if(strcmp((char*)iovrecv[0].iov_base,"try") == 0){
 		printf("unexpected try control\n");		
 		//control字段为try表示udp打洞消息不过应该永远都收不到这个消息才对
 	}*/
-	else if(strcmp(control,"nofile") == 0){
+	else if(strcmp(control,"nofile1") == 0){
 		pthread_t thread_id;
 		memcpy(&thread_id,recvline, sizeof(pthread_t));
 		printf("my thread id is %lu\n", thread_id);
 		if(pthread_cancel(thread_id) < 0)
 			err_sys("pthread_cancel failed\n");
+	}
+	else if(strcmp(control,"nofile2") == 0){
+		int fd;
+		memcpy(&fd, recvline, sizeof(int));
+		printf("已经打开的文件描述符是%d\n",fd);
+		close(fd);
 	}
 	else if(strcmp(control,"offline") == 0)
 		exit(2);
@@ -432,56 +514,119 @@ void interrupt_handler(int signo)
 
 void *thread_listen(void *arg)
 {
-	int connfd;
+	int connfd, newfd;
 	ssize_t n, nread;
 	off_t offset, leftbytes;
+	char filename[64] = {0};
 	char sendbuf[MAXLINE];
+	char recvbuf[MAXLINE] = {0};
+	struct stat buf;
+	struct file myfile;
 	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
 	pthread_cleanup_push(listen_cleanup, arg);
 	printf("socket %d start listen\n",farg->listenfd);
 	if( (connfd = accept(farg->listenfd, NULL, NULL)) < 0)
 		err_sys("accept error 1\n");
-	if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
-		err_sys("write error 1");
+
+	if(farg->flag == 1){					//文件发送端
+		if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
+			err_sys("write error 1");
 	
-	if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
-		err_sys("read error 1"); 
-	else if (n == 0)		//说明对面有该文件
-		goto end;	
+		if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
+			err_sys("read error 1"); 
+		else if (n == 0)		//说明对面有该文件
+			goto end;	
 		
 	
-	if(lseek(farg->fd, offset, SEEK_SET) == -1)
-		err_sys("lseek error");
-	leftbytes = farg->myfile.filesize - offset;
-	while(leftbytes > 0){		//发送文件大小个字节
-		if(leftbytes > MAXLINE){
-			if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
-				err_sys("read error");
+		if(lseek(farg->fd, offset, SEEK_SET) == -1)
+			err_sys("lseek error");
+		leftbytes = farg->myfile.filesize - offset;
+		while(leftbytes > 0){		//发送文件大小个字节
+			if(leftbytes > MAXLINE){
+				if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
+					err_sys("read error");
+			}
+			else{
+				if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
+					err_sys("read error");
+			}
+			leftbytes = leftbytes - nread;
+			if(write(connfd, sendbuf, nread) != nread)
+				goto end;	//说明对端异常关闭
+		}
+	}
+	else{
+		if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
+	
+			printf("读成功了%ld个字节\n",n);
+			printf("fileaddr为%s\n",myfile.fileaddr);
+			printf("文件的大小为%lu\n",myfile.filesize);
+		}
+		if(strrchr(myfile.fileaddr,'/') != NULL)
+			strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
+		else
+			strcpy(filename,myfile.fileaddr);
+		if(access(filename,F_OK) == 0){		//存在
+			if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
+				err_sys("open error");
+			if( fstat(newfd, &buf) < 0)			
+				err_sys("fstat error");
+			offset = buf.st_size;
+			if( offset >= myfile.filesize)
+				goto end;
+			else{
+				if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
+					goto end;
+			}
 		}
 		else{
-			if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
-				err_sys("read error");
+			if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
+				err_sys("open error");
+			offset = 0;
+			write(connfd, &offset, sizeof(off_t));
 		}
-		leftbytes = leftbytes - nread;
-		if(write(connfd, sendbuf, nread) != nread)
-			goto end;	//说明对端异常关闭
+		leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
+	
+		while(leftbytes > 0){		//接收文件大小个字节
+			if(leftbytes > MAXLINE){
+				if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
+					err_sys("read error");
+				else if(nread == 0)
+					goto end;
+			}
+			else{
+				if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
+					err_sys("read error");
+				else if(nread == 0)
+					goto end;
+			}
+			leftbytes = leftbytes - nread;
+			if(write(newfd, recvbuf, nread) != nread)
+				err_sys("write error");
+		}
+
+
 	}
 end:	close(connfd);
+	if(farg->flag != 1)
+		close(newfd);
 	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 }
 
 void *thread_connect(void *arg)
 {
-	int connfd, newfd, n;
+	int connfd, newfd;
 	char recvbuf[MAXLINE] = {0};
 	char filename[64] = {0};
-	off_t offset;
+	char sendbuf[MAXLINE];
+	off_t offset, n;
 	off_t leftbytes;
 	ssize_t nread;
 	struct stat buf;
 	struct file myfile;
+	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
 	pthread_cleanup_push(connect_cleanup, arg);
 	
@@ -491,58 +636,92 @@ void *thread_connect(void *arg)
 	if(connect(connfd, (struct sockaddr*)&tcpaddr, sizeof(struct sockaddr_in)) != 0)
 		err_sys("connect error 2\n");
 	
-	if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
+
+	if(farg->flag != 1){				//文件接收端
+		if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
 	
-		printf("读成功了%d个字节\n",n);
-		printf("fileaddr为%s\n",myfile.fileaddr);
-		printf("文件的大小为%lu\n",myfile.filesize);
-	}
-	if(strrchr(myfile.fileaddr,'/') != NULL)
-		strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
-	else
-		strcpy(filename,myfile.fileaddr);
+			printf("读成功了%ld个字节\n",n);
+			printf("fileaddr为%s\n",myfile.fileaddr);
+			printf("文件的大小为%lu\n",myfile.filesize);
+		}
+		if(strrchr(myfile.fileaddr,'/') != NULL)
+			strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
+		else
+			strcpy(filename,myfile.fileaddr);
 	
-	if(access(filename,F_OK) == 0){		//存在
-		if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
-			err_sys("open error");
-		if( fstat(newfd, &buf) < 0)			
-			err_sys("fstat error");
-		offset = buf.st_size;
-		if( offset >= myfile.filesize)
-			goto end;
-		else{
-			if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
+		if(access(filename,F_OK) == 0){		//存在
+			if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
+				err_sys("open error");
+			if( fstat(newfd, &buf) < 0)			
+				err_sys("fstat error");
+			offset = buf.st_size;
+			if( offset >= myfile.filesize)
 				goto end;
+			else{
+				if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
+					goto end;
+			}
+		}
+		else{
+			if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
+				err_sys("open error");
+			offset = 0;
+			write(connfd, &offset, sizeof(off_t));
+		}
+		leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
+	
+		while(leftbytes > 0){		//接收文件大小个字节
+			if(leftbytes > MAXLINE){
+				if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
+					err_sys("read error");
+				else if(nread == 0)
+					goto end;
+			}
+			else{
+				if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
+					err_sys("read error");
+				else if(nread == 0)
+					goto end;
+			}
+			leftbytes = leftbytes - nread;
+			if(write(newfd, recvbuf, nread) != nread)
+				err_sys("write error");
 		}
 	}
 	else{
-		if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
-			err_sys("open error");
-		offset = 0;
-		write(connfd, &offset, sizeof(off_t));
-	}
-	leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
+		if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
+			err_sys("write error 1");
 	
-	while(leftbytes > 0){		//接收文件大小个字节
-		if(leftbytes > MAXLINE){
-			if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
-				err_sys("read error");
-			else if(nread == 0)
-				goto end;
+		if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
+			err_sys("read error 1"); 
+		else if (n == 0)		//说明对面有该文件
+			goto end;	
+
+		if(lseek(farg->fd, offset, SEEK_SET) == -1)
+			err_sys("lseek error");
+		leftbytes = farg->myfile.filesize - offset;
+		while(leftbytes > 0){		//发送文件大小个字节
+			if(leftbytes > MAXLINE){
+				if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
+					err_sys("read error");
+			}
+			else{
+				if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
+					err_sys("read error");
+			}
+			leftbytes = leftbytes - nread;
+			if(write(connfd, sendbuf, nread) != nread)
+				goto end;	//说明对端异常关闭
 		}
-		else{
-			if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
-				err_sys("read error");
-			else if(nread == 0)
-				goto end;
-		}
-		leftbytes = leftbytes - nread;
-		if(write(newfd, recvbuf, nread) != nread)
-			err_sys("write error");
+
+
 	}
+	
 
 
 end:	close(connfd);
+	if(farg->flag != 1)
+		close(newfd);
 	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 	
@@ -551,8 +730,9 @@ end:	close(connfd);
 void listen_cleanup(void *arg)
 {
 	printf("step in listen cleanup\n");
-	close(((struct file_arg*)arg)->listenfd);
-	close(((struct file_arg*)arg)->fd);
+	close(((struct file_arg*)arg)->listenfd);		//这两个套接字必须在这里关闭的原因是listen线程可能会被其他线程取消
+	if(((struct file_arg*)arg)->flag == 1)
+		close(((struct file_arg*)arg)->fd);
 	free(arg);
 	return;
 }
@@ -560,6 +740,8 @@ void listen_cleanup(void *arg)
 void connect_cleanup(void *arg)
 {
 	printf("step in connect cleanup\n");
+	if(((struct file_arg*)arg)->flag == 1)
+		close(((struct file_arg*)arg)->fd);
 	free(arg);
 	return;
 }

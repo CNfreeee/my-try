@@ -27,18 +27,20 @@
 #include <ifaddrs.h>
 #include <sys/stat.h>
 
-
+//发送文件请求时交换的file结构体
 struct file{
-	off_t filesize;
-	pthread_t thread_id;
+	int fd;				//打开的文件描述符
+	off_t filesize;	
+	pthread_t thread_id;		//处理的线程
 	char fileowner[namelen];
+	struct sockaddr_in addr;	//消息发送方的地址，每次发送都要修改
 	char fileaddr[64];
 };
 
 struct file_arg{
 	int flag;		//1代表文件发送方，2代表文件接收方
 	int listenfd;
-	int fd;
+	int fd;			//同file中的fd
 	//char name[namelen];
 	struct sockaddr_in peeraddr;
 	struct file myfile;
