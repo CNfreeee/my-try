@@ -78,7 +78,7 @@ int main(int argc, char **argv)
 
 	if(inet_pton(AF_INET, argv[1], &servaddr.sin_addr) <= 0)
 		err_sys("inet_pton error");
-	
+	msgsend.msg_namelen = sizeof(struct sockaddr_in);	
 	msgsend.msg_iov = iovsend;
 	msgsend.msg_iovlen = 3;
 
@@ -201,7 +201,7 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 		err_sys("fstat error");
 	myfile.filesize = buf.st_size;
 	printf("file size is %lu, fd is %d\n",myfile.filesize, fd);
-	msgsend.msg_namelen = sizeof(peeraddr);	
+	
 	msgsend.msg_iovlen = 2;
 //	iovsend[0].iov_base = control;
 	iovsend[0].iov_len = len1;
@@ -250,7 +250,6 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 		pthread_create(&myfile.thread_id, NULL, thread_listen, (void*)my_arg);
 	}
 	else{							//本机在另外一个局域网中
-		//未写完
 		iovsend[0].iov_base = control;
 		myfile.addr = outeraddr;
 		msgsend.msg_name = (struct sockaddr*)&peeraddr;	
@@ -284,7 +283,17 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		char reply[12] ={0};
 		memcpy(&peerfile, recvline, sizeof(peerfile));
 		if(strcmp(peerfile.fileowner,name) == 0 ){			//此情况说明自己是文件传输的发起方，并且两方都无法被连接，此时需要进行tcp打洞
-		
+			in_port_t udp_port;								//发回给对端
+			struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));		
+			memcpy(&peeraddr,recvline+sizeof(peerfile),sizeof(peeraddr));
+			memcpy(&udp_port,recvline+sizeof(peerfile)+sizeof(peeraddr),sizeof(in_port_t));
+			my_arg->flag = 1;
+			my_arg->fd = peerfile.fd;
+			my_arg->peeraddr = peeraddr;
+			my_arg->port = udp_port;
+			memcpy(&(my_arg->myfile), &peerfile, sizeof(peerfile));
+			pthread_t ptid;
+			pthread_create(&ptid, NULL, thread_tcp2, (void*)my_arg);
 		
 		}
 		else {
@@ -336,6 +345,15 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 						err_sys("sendmsg to server error");
 
 				}
+				else{						//本端处于另一个局域网
+					struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+					memcpy(&(my_arg->myfile), &peerfile, sizeof(peerfile));
+					my_arg->peeraddr = peerfile.addr;
+					my_arg->flag = 2;
+					pthread_t ptid;
+					pthread_create(&ptid, NULL, thread_tcp1, (void*)my_arg);
+
+				}
 			}
 			else{					//倘若拒绝接收
 				char refuse[commandlen] = "nofile2";
@@ -355,7 +373,7 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		struct file peerfile;
 		struct sockaddr_in listenaddr;
 		char reply[12] ={0};
-		int port;
+		in_port_t port;
 		char str[6] = {0};
 		memcpy(&peerfile,recvline, sizeof(peerfile));
 		listenaddr = peerfile.addr;
@@ -433,6 +451,20 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		memcpy(&fd, recvline, sizeof(int));
 		printf("已经打开的文件描述符是%d\n",fd);
 		close(fd);
+	}
+	else if(strcmp(control,"tcpfile") == 0){
+		struct sockaddr_in peer_tcpaddr, udpaddr;
+		in_port_t port;
+		printf("收到的端口本地端口号是%d\n",port);
+		memcpy(&peer_tcpaddr, recvline, sizeof(peer_tcpaddr));
+		memcpy(&port, recvline+sizeof(peer_tcpaddr), sizeof(in_port_t));
+		bzero(&udpaddr,sizeof(udpaddr));
+		udpaddr.sin_family = AF_INET;
+		udpaddr.sin_port = port;			//互相传输的端口号一直是网络序
+		if(inet_pton(AF_INET, "127.0.0.1", &udpaddr.sin_addr) != 1)
+			err_sys("inet_pton error");
+		if(sendto(sockfd, &peer_tcpaddr, sizeof(peer_tcpaddr), 0, (struct sockaddr*)&udpaddr, sizeof(udpaddr)) < 0)
+			err_sys("sendto error");
 	}
 	else if(strcmp(control,"offline") == 0)
 		exit(2);
@@ -621,14 +653,14 @@ void *thread_connect(void *arg)
 	char recvbuf[MAXLINE] = {0};
 	char filename[64] = {0};
 	char sendbuf[MAXLINE];
-	off_t offset, n;
+	off_t offset;
 	off_t leftbytes;
-	ssize_t nread;
+	ssize_t nread,n;
 	struct stat buf;
 	struct file myfile;
 	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
-	pthread_cleanup_push(connect_cleanup, arg);
+	//pthread_cleanup_push(connect_cleanup, arg);
 	
 	if((connfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket error 2\n");
@@ -639,7 +671,6 @@ void *thread_connect(void *arg)
 
 	if(farg->flag != 1){				//文件接收端
 		if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
-	
 			printf("读成功了%ld个字节\n",n);
 			printf("fileaddr为%s\n",myfile.fileaddr);
 			printf("文件的大小为%lu\n",myfile.filesize);
@@ -659,14 +690,15 @@ void *thread_connect(void *arg)
 				goto end;
 			else{
 				if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
-					goto end;
+					err_sys("write error");
 			}
 		}
 		else{
 			if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
 				err_sys("open error");
 			offset = 0;
-			write(connfd, &offset, sizeof(off_t));
+			if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
+				err_sys("write error");
 		}
 		leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
 	
@@ -722,10 +754,265 @@ void *thread_connect(void *arg)
 end:	close(connfd);
 	if(farg->flag != 1)
 		close(newfd);
-	pthread_cleanup_pop(1);
+	else
+		close(farg->fd);
+	free(arg);
+//	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 	
 }
+
+void *thread_tcp1(void *arg)
+{
+	printf("进入了tcp1\n");
+	int conn_servsock,conn_peersock, udpsock, listenfd;						//udpsock用来接收主线程传过来的数据
+	int on = 1, newfd;
+	in_port_t udp_port;
+	char control[commandlen] = "file";
+	struct msghdr msg;
+	struct iovec iov[4];						//iovsend是全局变量，如果直接用要加锁，这里新建一个局部变量
+	struct sockaddr_in bindaddr, udpaddr, tcpaddr, peer_udpaddr, peer_tcpaddr;	//tcpaddr用来给对端连接
+	struct file_arg *farg = (struct file_arg*)arg;
+	struct file myfile;					
+	char recvbuf[MAXLINE] = {0};
+	char filename[64] = {0};
+	off_t offset;
+	off_t leftbytes;
+	ssize_t nread, n;
+	socklen_t len;
+	struct stat buf;
+	pthread_detach(pthread_self());
+	bzero(&msg, sizeof(msg));
+	memcpy(&myfile, &(farg->myfile), sizeof(myfile));
+	peer_udpaddr = farg->peeraddr;
+	myfile.addr = outeraddr;				//改成自己的NAT地址
+	len = sizeof(bindaddr);
+	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+		err_sys("connect to server error");
+	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
+		err_sys("getsockname failed\n");
+	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
+		err_sys("setsockopt error");
+	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)		//从服务器端发回的tcp向外连接的地址
+		err_sys("read from server error");
+	printf("read from server success\n");
+	close(conn_servsock);
+	/*if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(bind(listenfd, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");*/
+	if( (udpsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		err_sys("create udp socket failed");
+	bzero(&udpaddr, sizeof(udpaddr));
+	udpaddr.sin_family = AF_INET;
+	udpaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	udpaddr.sin_port = htons(0);
+	if(bind(udpsock, (struct sockaddr *) &udpaddr, sizeof(udpaddr)) < 0)		
+		err_sys("bind error");
+	if(getsockname(udpsock, (struct sockaddr*) &udpaddr, &len) < 0)
+		err_sys("getsockname failed\n");
+	udp_port = udpaddr.sin_port;
+	msg.msg_iovlen = 4;
+	msg.msg_namelen = sizeof(peer_udpaddr);	
+	msg.msg_iov = iov;
+	iov[0].iov_base = control;
+	iov[0].iov_len = commandlen;
+	iov[1].iov_base = &myfile;
+	iov[1].iov_len = sizeof(myfile);
+	iov[2].iov_base = &tcpaddr;
+	iov[2].iov_len = sizeof(tcpaddr);
+	iov[3].iov_base = &udp_port;
+	iov[3].iov_len = sizeof(in_port_t);
+	msg.msg_name = (struct sockaddr*)&peer_udpaddr;
+	if(sendmsg(sockfd, &msg, 0) < 0)
+		err_sys("sendmsg error 2");
+
+	printf("开始等待\n");
+	if( recv(udpsock, &peer_tcpaddr, sizeof(peer_tcpaddr), 0) < 0) 				//阻塞在这里，直到主线程发数据过来
+		err_sys("recv error");
+	farg->peeraddr = peer_tcpaddr;				//在这里将收到了对端tcp地址进行赋值
+	close(udpsock);
+	printf("收到了数据\n");
+	//这里其实可以直接调用thread_connect函数，但需要传递一个已经绑定好本地地址的tcp套接字
+	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
+		err_sys("setsockopt error");
+	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if( bind(conn_peersock,(struct sockaddr*)&bindaddr, sizeof(bindaddr)) < 0)
+		err_sys("bind error");
+	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+		err_sys("it shouldn't");
+	if ((n = read(conn_peersock, &myfile, sizeof(struct file)))> 0){
+		printf("读成功了%ld个字节\n",n);
+		printf("fileaddr为%s\n",myfile.fileaddr);
+		printf("文件的大小为%lu\n",myfile.filesize);
+	}
+	if(strrchr(myfile.fileaddr,'/') != NULL)
+		strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
+	else
+		strcpy(filename,myfile.fileaddr);
+	if(access(filename,F_OK) == 0){		//存在
+		if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
+			err_sys("open error");
+		if( fstat(newfd, &buf) < 0)			
+			err_sys("fstat error");
+		offset = buf.st_size;
+		if( offset >= myfile.filesize)
+			goto end;
+		else{
+			if(write(conn_peersock, &offset, sizeof(off_t)) != sizeof(off_t))
+				err_sys("write error 2");
+		}
+	}
+	else{
+		if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
+			err_sys("open error");
+		offset = 0;
+		if(write(conn_peersock, &offset, sizeof(off_t)) != sizeof(off_t))
+			err_sys("write error 3");
+	}
+	leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
+	
+	while(leftbytes > 0){		//接收文件大小个字节
+		if(leftbytes > MAXLINE){
+			if( (nread = read(conn_peersock, recvbuf, MAXLINE)) < 0)
+				err_sys("read error");
+			else if(nread == 0)
+				goto end;
+		}
+		else{
+			if( (nread = read(conn_peersock, recvbuf, leftbytes)) < 0)
+				err_sys("read error");
+			else if(nread == 0)
+				goto end;
+		}
+		leftbytes = leftbytes - nread;
+		if(write(newfd, recvbuf, nread) != nread)
+			err_sys("write error");
+	}
+end:close(conn_peersock);
+	close(newfd);
+	free(arg);
+	pthread_exit((void*)1);
+}
+
+
+void *thread_tcp2(void *arg)
+{
+	printf("进入了tcp2\n");
+	char control[commandlen] = "tcpfile";
+	int conn_servsock, conn_peersock, listenfd, connfd;
+	struct msghdr msg;
+	struct iovec iov[3];
+	struct sockaddr_in bindaddr, tcpaddr, peer_udpaddr, peer_tcpaddr;	//tcpaddr用来给对端连接
+	struct file_arg *farg = (struct file_arg*)arg;
+	struct file myfile;					
+	char sendbuf[MAXLINE] = {0};
+	off_t offset;
+	off_t leftbytes;
+	ssize_t nread, n;
+	int on = 1;
+	socklen_t len;
+	in_port_t udp_port;
+	struct stat buf;
+	pthread_detach(pthread_self());
+	bzero(&msg, sizeof(msg));
+	memcpy(&myfile, &(farg->myfile), sizeof(myfile));
+	len = sizeof(bindaddr);
+	peer_tcpaddr = farg->peeraddr;
+	peer_udpaddr = myfile.addr;
+	udp_port = farg->port;
+	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+		err_sys("connect to server error");
+	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
+		err_sys("getsockname failed\n");
+	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)
+		err_sys("read from server error");
+	printf("read from server success\n");
+	close(conn_servsock);
+	
+	msg.msg_iovlen = 4;
+	msg.msg_namelen = sizeof(peer_udpaddr);	
+	msg.msg_iov = iov;
+	iov[0].iov_base = control;
+	iov[0].iov_len = commandlen;
+	iov[1].iov_base = &tcpaddr;
+	iov[1].iov_len = sizeof(tcpaddr);
+	iov[2].iov_base = &udp_port;
+	iov[2].iov_len = sizeof(in_port_t);
+	msg.msg_name = (struct sockaddr*)&peer_udpaddr;
+	
+	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
+		err_sys("setsockopt error");
+	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if( bind(conn_peersock,(struct sockaddr*)&bindaddr, sizeof(bindaddr)) < 0)
+		err_sys("bind error");
+	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+		printf("此处connect失败是正常的\n");
+	close(conn_peersock);
+	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(bind(listenfd, (struct sockaddr *)&bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");
+	if(listen(listenfd, 10) < 0)
+		err_sys("listen error");
+	if(sendmsg(sockfd, &msg, 0) < 0)		//开始监听后再发消息
+		err_sys("sendmsg error 3");
+	if( (connfd = accept(listenfd, NULL, NULL)) < 0)
+		err_sys("accept error");
+
+	if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
+		err_sys("write error 1");
+	
+	if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
+		err_sys("read error 1"); 
+	else if (n == 0)		//说明对面有该文件
+		goto end;
+	if(lseek(farg->fd, offset, SEEK_SET) == -1)
+		err_sys("lseek error");
+	leftbytes = farg->myfile.filesize - offset;
+	while(leftbytes > 0){		//发送文件大小个字节
+		if(leftbytes > MAXLINE){
+			if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
+				err_sys("read error");
+		}
+		else{
+			if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
+				err_sys("read error");
+		}
+		leftbytes = leftbytes - nread;
+		if(write(connfd, sendbuf, nread) != nread)
+			goto end;	//说明对端异常关闭
+	}
+
+
+end:	close(connfd);
+	close(listenfd);
+	close(farg->fd);
+	pthread_exit((void*)1);
+}
+
 
 void listen_cleanup(void *arg)
 {
@@ -737,11 +1024,11 @@ void listen_cleanup(void *arg)
 	return;
 }
 
-void connect_cleanup(void *arg)
+/*void connect_cleanup(void *arg)
 {
 	printf("step in connect cleanup\n");
 	if(((struct file_arg*)arg)->flag == 1)
 		close(((struct file_arg*)arg)->fd);
 	free(arg);
 	return;
-}
+}*/

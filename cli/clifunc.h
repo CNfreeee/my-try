@@ -25,6 +25,8 @@ void interrupt_handler(int);
 void *thread_heart(void*);
 void *thread_listen(void*);
 void *thread_connect(void*);
+void *thread_tcp1(void*);
+void *thread_tcp2(void*);
 void listen_cleanup(void*);
 void connect_cleanup(void*);
 

@@ -24,7 +24,8 @@ int main(int argc, char **argv)
 	struct sockaddr_in peerlocaladdr;
 	struct iovec iovrecv[3];
 	const int on = 1;
-	
+	int val;
+	socklen_t len;
 	/*struct sigaction SIGALRM_act;
 	SIGALRM_act.sa_handler = alarm_handler;
 	sigemptyset(&SIGALRM_act.sa_mask);
@@ -71,7 +72,11 @@ int main(int argc, char **argv)
 		err_sys("setsockopt error");
 	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-
+	
+	if( (val = fcntl(listenfd, F_GETFL, 0)) < 0)		//将监听套接字设置为非阻塞
+		err_sys("getfl failed");
+	if(fcntl(listenfd, F_SETFL, val|O_NONBLOCK) < 0)
+		err_sys("setfl failed");	
 
 	if(bind(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0)
 		err_sys("bind error");
@@ -90,7 +95,8 @@ int main(int argc, char **argv)
 	if(epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
 		err_sys("epoll_ctl error");
 	
-	pthread_t *pth = (pthread_t*)malloc((threadsnum+1) * sizeof(pthread_t));
+//	pthread_t *pth = (pthread_t*)malloc((threadsnum+1) * sizeof(pthread_t));
+	pthread_t pth[threadsnum+1];
 	for(i = 0; i < threadsnum; ++i){									//创建线程池
 		if(pthread_create(&pth[i], NULL, &thread_main, NULL)!= 0)
 			err_sys("pthread poll create failed");
@@ -102,6 +108,7 @@ int main(int argc, char **argv)
 	ssize_t n;
 	int newfd;
 	int tempsockfd;
+	len = sizeof(cliaddr);
 	for(;;){
 		if( (nfds = epoll_wait(epollfd, events, cliMAX_EVENTS, -1)) == -1){				//考虑被信号中断的情况
 			if(errno == EINTR)
@@ -110,7 +117,13 @@ int main(int argc, char **argv)
 		}
 		for(m = 0; m < nfds; ++m){
 			if(events[m].data.fd == listenfd){
-				
+				if( (newfd = accept(listenfd, (struct sockaddr*)&cliaddr, &len)) < )
+					if(errno == EWOULDBLOCK)
+						continue;
+					else
+						err_sys("accept error");
+					write(newfd, &cliaddr, sizeof(cliaddr));			//将发起tcp连接请求的对端地址发回
+					close(newfd);
 			}
 			else if(events[m].data.fd == sockfd){
 		//		if(events[m].events & EPOLLIN){
