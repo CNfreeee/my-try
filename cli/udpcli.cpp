@@ -781,38 +781,58 @@ void *thread_tcp1(void *arg)
 	ssize_t nread, n;
 	socklen_t len;
 	struct stat buf;
+	char addrstr[16] = {0};
 	pthread_detach(pthread_self());
 	bzero(&msg, sizeof(msg));
 	memcpy(&myfile, &(farg->myfile), sizeof(myfile));
 	peer_udpaddr = farg->peeraddr;
 	myfile.addr = outeraddr;				//改成自己的NAT地址
 	len = sizeof(bindaddr);
+	
+	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(listen(listenfd, 10) < 0)
+		err_sys("listen error");
+
+	if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
+		err_sys("getsockname failed\n");
 	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
-		err_sys("connect to server error");
-	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
-		err_sys("getsockname failed\n");
-	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
+
+	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
 		err_sys("setsockopt error");
 	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
+	if(bind(conn_servsock, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");
+	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+		err_sys("connect to server error");
+
+	
+	if(inet_ntop(AF_INET, &(bindaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+		err_sys("inet_ntop error");
+	printf("333333receive message from %s: %hu \n",addrstr, ntohs(bindaddr.sin_port));	//网络字节序转成主机字节序显示
+
+	
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)		//从服务器端发回的tcp向外连接的地址
 		err_sys("read from server error");
 	printf("read from server success\n");
 
-	char addrstr[16] = {0};
+	
 	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
 		err_sys("inet_ntop error");
 	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
 	
 	//close(conn_servsock);
-	/*if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
-		err_sys("setsockopt error");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
-		err_sys("setsockopt error");
-	if(bind(listenfd, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
-		err_sys("bind error");*/
+
+	//if(bind(listenfd, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
+	//	err_sys("bind error");
+	
+	
 	if( (udpsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 		err_sys("create udp socket failed");
 	bzero(&udpaddr, sizeof(udpaddr));
