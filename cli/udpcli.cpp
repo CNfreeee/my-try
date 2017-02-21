@@ -766,7 +766,7 @@ void *thread_tcp1(void *arg)
 {
 	printf("进入了tcp1\n");
 	int conn_servsock,conn_peersock, udpsock, listenfd;						//udpsock用来接收主线程传过来的数据
-	int on = 1, newfd;
+	int on = 1, newfd, assist_udpsock;
 	in_port_t udp_port;
 	char control[commandlen] = "file";
 	struct msghdr msg;
@@ -789,17 +789,9 @@ void *thread_tcp1(void *arg)
 	myfile.addr = outeraddr;				//改成自己的NAT地址
 	len = sizeof(bindaddr);
 	
-	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-		err_sys("create tcp socket failed");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
-		err_sys("setsockopt error");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
-		err_sys("setsockopt error");
-	if(listen(listenfd, 10) < 0)
-		err_sys("listen error");
+	
 
-	if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
-		err_sys("getsockname failed\n");
+	
 	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
 
@@ -807,11 +799,11 @@ void *thread_tcp1(void *arg)
 		err_sys("setsockopt error");
 	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if(bind(conn_servsock, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
-		err_sys("bind error");
+	
 	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
 		err_sys("connect to server error");
-
+	if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
+		err_sys("getsockname failed\n");
 	
 	if(inet_ntop(AF_INET, &(bindaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
 		err_sys("inet_ntop error");
@@ -821,13 +813,24 @@ void *thread_tcp1(void *arg)
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)		//从服务器端发回的tcp向外连接的地址
 		err_sys("read from server error");
 	printf("read from server success\n");
-
+	//close(conn_servsock);
 	
 	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
 		err_sys("inet_ntop error");
 	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
 	
-	//close(conn_servsock);
+
+	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(bind(listenfd, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");
+	if(listen(listenfd, 10) < 0)
+		err_sys("listen error");
+	
 
 	//if(bind(listenfd, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
 	//	err_sys("bind error");
@@ -859,6 +862,15 @@ void *thread_tcp1(void *arg)
 	if(sendmsg(sockfd, &msg, 0) < 0)
 		err_sys("sendmsg error 2");
 
+
+	if( (assist_udpsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		err_sys("create udp socket failed");
+	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(bind(assist_udpsock, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");
 	printf("开始等待\n");
 	if( recv(udpsock, &peer_tcpaddr, sizeof(peer_tcpaddr), 0) < 0) 				//阻塞在这里，直到主线程发数据过来
 		err_sys("recv error");
@@ -871,6 +883,11 @@ void *thread_tcp1(void *arg)
 
 
 	printf("收到了数据\n");
+	if(sendto(assist_udpsock, " ", 0, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+		err_sys("sendto error");
+	if(sendto(assist_udpsock, " ", 0, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+		err_sys("sendto error");
+	sleep(1);
 	//这里其实可以直接调用thread_connect函数，但需要传递一个已经绑定好本地地址的tcp套接字
 	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
@@ -941,7 +958,7 @@ void *thread_tcp2(void *arg)
 {
 	printf("进入了tcp2\n");
 	char control[commandlen] = "tcpfile";
-	int conn_servsock, conn_peersock, listenfd, connfd;
+	int conn_servsock, conn_peersock, listenfd, connfd, assist_udpsock;
 	struct msghdr msg;
 	struct iovec iov[3];
 	struct sockaddr_in bindaddr, tcpaddr, peer_udpaddr, peer_tcpaddr;	//tcpaddr用来给对端连接
@@ -962,29 +979,19 @@ void *thread_tcp2(void *arg)
 	peer_udpaddr = myfile.addr;
 	udp_port = farg->port;
 
-	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-		err_sys("create tcp socket failed");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
-		err_sys("setsockopt error");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
-		err_sys("setsockopt error");
-	if(listen(listenfd, 10) < 0)
-		err_sys("listen error");
-	if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
-		err_sys("getsockname failed\n");
+
+
 
 	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-
-
 	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if(bind(conn_servsock, (struct sockaddr *)&bindaddr, sizeof(bindaddr)) < 0)		
-		err_sys("bind error");
 	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
 		err_sys("connect to server error");
+	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
+		err_sys("getsockname failed\n");	
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)
 		err_sys("read from server error");
 
@@ -996,6 +1003,16 @@ void *thread_tcp2(void *arg)
 	printf("read from server success\n");
 	//close(conn_servsock);
 	
+	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(bind(conn_servsock, (struct sockaddr *)&bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");	
+	if(listen(listenfd, 10) < 0)
+		err_sys("listen error");	
 	msg.msg_iovlen = 4;
 	msg.msg_namelen = sizeof(peer_udpaddr);	
 	msg.msg_iov = iov;
@@ -1025,7 +1042,17 @@ void *thread_tcp2(void *arg)
 		printf("此处connect失败是正常的\n");
 	//close(conn_peersock);
 	
-
+	if( (assist_udpsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		err_sys("create udp socket failed");
+	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(bind(assist_udpsock, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");
+	if(sendto(assist_udpsock, " ", 0, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+		err_sys("sendto error");
+	
 
 	if(sendmsg(sockfd, &msg, 0) < 0)		//开始监听后再发消息
 		err_sys("sendmsg error 3");
