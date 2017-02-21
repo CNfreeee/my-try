@@ -806,7 +806,7 @@ void *thread_tcp1(void *arg)
 		err_sys("inet_ntop error");
 	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
 	
-	close(conn_servsock);
+	//close(conn_servsock);
 	/*if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
 		err_sys("setsockopt error");
 	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
@@ -960,7 +960,7 @@ void *thread_tcp2(void *arg)
 	printf("222222222receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
 
 	printf("read from server success\n");
-	close(conn_servsock);
+	//close(conn_servsock);
 	
 	msg.msg_iovlen = 4;
 	msg.msg_namelen = sizeof(peer_udpaddr);	
@@ -989,7 +989,7 @@ void *thread_tcp2(void *arg)
 
 	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		printf("此处connect失败是正常的\n");
-	close(conn_peersock);
+	//close(conn_peersock);
 	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
 	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
@@ -1004,7 +1004,7 @@ void *thread_tcp2(void *arg)
 		err_sys("sendmsg error 3");
 	if( (connfd = accept(listenfd, NULL, NULL)) < 0)
 		err_sys("accept error");
-
+	printf("accept返回了\n");
 	if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
 		err_sys("write error 1");
 	
