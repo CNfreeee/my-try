@@ -37,7 +37,7 @@ int main(int argc, char **argv)
 	bzero(&msgrecv, sizeof(msgrecv));
 	bzero(&peerlocaladdr,sizeof(peerlocaladdr));
 	msgrecv.msg_name = (struct sockaddr *)&cliaddr;
-	socklen_t len = sizeof(cliaddr);
+	len = sizeof(cliaddr);
 	msgrecv.msg_namelen = len;
 	msgrecv.msg_iov = iovrecv;
 	msgrecv.msg_iovlen = 3;
@@ -117,7 +117,7 @@ int main(int argc, char **argv)
 		}
 		for(m = 0; m < nfds; ++m){
 			if(events[m].data.fd == listenfd){
-				if( (newfd = accept(listenfd, (struct sockaddr*)&cliaddr, &len)) < )
+				if( (newfd = accept(listenfd, (struct sockaddr*)&cliaddr, &len)) < 0)
 					if(errno == EWOULDBLOCK)
 						continue;
 					else

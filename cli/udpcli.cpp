@@ -800,6 +800,12 @@ void *thread_tcp1(void *arg)
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)		//从服务器端发回的tcp向外连接的地址
 		err_sys("read from server error");
 	printf("read from server success\n");
+
+	char addrstr[16] = {0};
+	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+		err_sys("inet_ntop error");
+	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
+	
 	close(conn_servsock);
 	/*if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
 		err_sys("setsockopt error");
@@ -838,6 +844,12 @@ void *thread_tcp1(void *arg)
 		err_sys("recv error");
 	farg->peeraddr = peer_tcpaddr;				//在这里将收到了对端tcp地址进行赋值
 	close(udpsock);
+
+	if(inet_ntop(AF_INET, &(peer_tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+		err_sys("inet_ntop error");
+	printf("222222222receive message from %s: %hu \n",addrstr, ntohs(peer_tcpaddr.sin_port));	//网络字节序转成主机字节序显示
+
+
 	printf("收到了数据\n");
 	//这里其实可以直接调用thread_connect函数，但需要传递一个已经绑定好本地地址的tcp套接字
 	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -922,7 +934,6 @@ void *thread_tcp2(void *arg)
 	int on = 1;
 	socklen_t len;
 	in_port_t udp_port;
-	struct stat buf;
 	pthread_detach(pthread_self());
 	bzero(&msg, sizeof(msg));
 	memcpy(&myfile, &(farg->myfile), sizeof(myfile));
@@ -942,6 +953,12 @@ void *thread_tcp2(void *arg)
 		err_sys("setsockopt error");
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)
 		err_sys("read from server error");
+
+	char addrstr[16] = {0};
+	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+		err_sys("inet_ntop error");
+	printf("222222222receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
+
 	printf("read from server success\n");
 	close(conn_servsock);
 	
@@ -964,6 +981,12 @@ void *thread_tcp2(void *arg)
 		err_sys("setsockopt error");
 	if( bind(conn_peersock,(struct sockaddr*)&bindaddr, sizeof(bindaddr)) < 0)
 		err_sys("bind error");
+
+	
+	if(inet_ntop(AF_INET, &(peer_tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+		err_sys("inet_ntop error");
+	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(peer_tcpaddr.sin_port));	//网络字节序转成主机字节序显示
+
 	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		printf("此处connect失败是正常的\n");
 	close(conn_peersock);
