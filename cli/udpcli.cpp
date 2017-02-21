@@ -961,16 +961,30 @@ void *thread_tcp2(void *arg)
 	peer_tcpaddr = farg->peeraddr;
 	peer_udpaddr = myfile.addr;
 	udp_port = farg->port;
+
+	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+		err_sys("setsockopt error");
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+		err_sys("setsockopt error");
+	if(listen(listenfd, 10) < 0)
+		err_sys("listen error");
+	if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
+		err_sys("getsockname failed\n");
+
 	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
-		err_sys("connect to server error");
-	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
-		err_sys("getsockname failed\n");
+
+
 	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
+	if(bind(conn_servsock, (struct sockaddr *)&bindaddr, sizeof(bindaddr)) < 0)		
+		err_sys("bind error");
+	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+		err_sys("connect to server error");
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)
 		err_sys("read from server error");
 
@@ -1010,16 +1024,9 @@ void *thread_tcp2(void *arg)
 	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		printf("此处connect失败是正常的\n");
 	//close(conn_peersock);
-	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-		err_sys("create tcp socket failed");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
-		err_sys("setsockopt error");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
-		err_sys("setsockopt error");
-	if(bind(listenfd, (struct sockaddr *)&bindaddr, sizeof(bindaddr)) < 0)		
-		err_sys("bind error");
-	if(listen(listenfd, 10) < 0)
-		err_sys("listen error");
+	
+
+
 	if(sendmsg(sockfd, &msg, 0) < 0)		//开始监听后再发消息
 		err_sys("sendmsg error 3");
 	if( (connfd = accept(listenfd, NULL, NULL)) < 0)
