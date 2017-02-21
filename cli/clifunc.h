@@ -29,6 +29,9 @@ void *thread_tcp1(void*);
 void *thread_tcp2(void*);
 void listen_cleanup(void*);
 void connect_cleanup(void*);
+void sendfile(int, struct file *, int);
+void recvfile(int, int *);
+
 
 extern int sockfd;
 extern struct msghdr msgsend, msgrecv;		

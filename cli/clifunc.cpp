@@ -248,3 +248,93 @@ void show_users()
 	printf("\n");
 
 }
+
+void sendfile(int connfd, struct file *myfile, int fd)
+{
+	ssize_t n, nread;
+	off_t offset, leftbytes;
+	char sendbuf[MAXLINE] = {0};
+	if(write(connfd, myfile, sizeof(struct file)) < 0)	//发送文件大小
+		err_sys("write error 1");
+	
+	if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
+		err_sys("read error 1"); 
+	else if (n == 0)		//说明对面有该文件
+		return;		
+	if(lseek(fd, offset, SEEK_SET) == -1)
+		err_sys("lseek error");
+	leftbytes = myfile->filesize - offset;
+	while(leftbytes > 0){		//发送文件大小个字节
+		if(leftbytes > MAXLINE){
+			if( (nread = read(fd, sendbuf, MAXLINE)) < 0)
+				err_sys("read error");
+		}
+		else{
+			if( (nread = read(fd, sendbuf, leftbytes)) < 0)
+				err_sys("read error");
+		}
+		leftbytes = leftbytes - nread;
+		if(write(connfd, sendbuf, nread) != nread)
+			return;	//说明对端异常关闭
+	}
+
+}
+
+void recvfile(int connfd, int *newfd)
+{
+	ssize_t n, nread;
+	char filename[64] = {0};
+	char recvbuf[MAXLINE] = {0};
+	off_t offset, leftbytes;
+	struct stat buf;
+	struct file myfile;
+	if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
+		printf("读成功了%ld个字节\n",n);
+		printf("fileaddr为%s\n",myfile.fileaddr);
+		printf("文件的大小为%lu\n",myfile.filesize);
+	}
+	if(strrchr(myfile.fileaddr,'/') != NULL)
+		strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
+	else
+		strcpy(filename,myfile.fileaddr);
+	if(access(filename,F_OK) == 0){		//存在
+		if( (*newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
+			err_sys("open error");
+		if( fstat(*newfd, &buf) < 0)			
+			err_sys("fstat error");
+		offset = buf.st_size;
+		if( offset >= myfile.filesize)
+			return;
+		else
+			if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
+				err_sys("write error");
+	}
+	else{
+		if( (*newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
+			err_sys("open error");
+		offset = 0;
+		if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
+			err_sys("write error");
+	}
+
+	leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
+	while(leftbytes > 0){		//接收文件大小个字节
+		if(leftbytes > MAXLINE){
+			if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
+				err_sys("read error");
+			else if(nread == 0)
+				return;
+			
+		}
+		else{
+			if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
+				err_sys("read error");
+			else if(nread == 0)
+				return;
+		}
+		leftbytes = leftbytes - nread;
+		if(write(*newfd, recvbuf, nread) != nread)
+			err_sys("write error");
+	}
+
+}

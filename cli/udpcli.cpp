@@ -547,13 +547,6 @@ void interrupt_handler(int signo)
 void *thread_listen(void *arg)
 {
 	int connfd, newfd;
-	ssize_t n, nread;
-	off_t offset, leftbytes;
-	char filename[64] = {0};
-	char sendbuf[MAXLINE];
-	char recvbuf[MAXLINE] = {0};
-	struct stat buf;
-	struct file myfile;
 	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
 	pthread_cleanup_push(listen_cleanup, arg);
@@ -561,86 +554,12 @@ void *thread_listen(void *arg)
 	if( (connfd = accept(farg->listenfd, NULL, NULL)) < 0)
 		err_sys("accept error 1\n");
 
-	if(farg->flag == 1){					//文件发送端
-		if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
-			err_sys("write error 1");
-	
-		if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
-			err_sys("read error 1"); 
-		else if (n == 0)		//说明对面有该文件
-			goto end;	
-		
-	
-		if(lseek(farg->fd, offset, SEEK_SET) == -1)
-			err_sys("lseek error");
-		leftbytes = farg->myfile.filesize - offset;
-		while(leftbytes > 0){		//发送文件大小个字节
-			if(leftbytes > MAXLINE){
-				if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
-					err_sys("read error");
-			}
-			else{
-				if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
-					err_sys("read error");
-			}
-			leftbytes = leftbytes - nread;
-			if(write(connfd, sendbuf, nread) != nread)
-				goto end;	//说明对端异常关闭
-		}
-	}
-	else{
-		if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
-	
-			printf("读成功了%ld个字节\n",n);
-			printf("fileaddr为%s\n",myfile.fileaddr);
-			printf("文件的大小为%lu\n",myfile.filesize);
-		}
-		if(strrchr(myfile.fileaddr,'/') != NULL)
-			strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
-		else
-			strcpy(filename,myfile.fileaddr);
-		if(access(filename,F_OK) == 0){		//存在
-			if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
-				err_sys("open error");
-			if( fstat(newfd, &buf) < 0)			
-				err_sys("fstat error");
-			offset = buf.st_size;
-			if( offset >= myfile.filesize)
-				goto end;
-			else{
-				if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
-					goto end;
-			}
-		}
-		else{
-			if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
-				err_sys("open error");
-			offset = 0;
-			write(connfd, &offset, sizeof(off_t));
-		}
-		leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
-	
-		while(leftbytes > 0){		//接收文件大小个字节
-			if(leftbytes > MAXLINE){
-				if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
-					err_sys("read error");
-				else if(nread == 0)
-					goto end;
-			}
-			else{
-				if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
-					err_sys("read error");
-				else if(nread == 0)
-					goto end;
-			}
-			leftbytes = leftbytes - nread;
-			if(write(newfd, recvbuf, nread) != nread)
-				err_sys("write error");
-		}
+	if(farg->flag == 1)					//文件发送端
+		sendfile(connfd, &(farg->myfile), farg->fd);
+	else
+		recvfile(connfd, &newfd);
 
-
-	}
-end:	close(connfd);
+	close(connfd);
 	if(farg->flag != 1)
 		close(newfd);
 	pthread_cleanup_pop(1);
@@ -650,14 +569,6 @@ end:	close(connfd);
 void *thread_connect(void *arg)
 {
 	int connfd, newfd;
-	char recvbuf[MAXLINE] = {0};
-	char filename[64] = {0};
-	char sendbuf[MAXLINE];
-	off_t offset;
-	off_t leftbytes;
-	ssize_t nread,n;
-	struct stat buf;
-	struct file myfile;
 	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
 	//pthread_cleanup_push(connect_cleanup, arg);
@@ -667,95 +578,17 @@ void *thread_connect(void *arg)
 	struct sockaddr_in tcpaddr = ((struct file_arg*)arg)->peeraddr;
 	if(connect(connfd, (struct sockaddr*)&tcpaddr, sizeof(struct sockaddr_in)) != 0)
 		err_sys("connect error 2\n");
-	
 
-	if(farg->flag != 1){				//文件接收端
-		if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
-			printf("读成功了%ld个字节\n",n);
-			printf("fileaddr为%s\n",myfile.fileaddr);
-			printf("文件的大小为%lu\n",myfile.filesize);
-		}
-		if(strrchr(myfile.fileaddr,'/') != NULL)
-			strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
-		else
-			strcpy(filename,myfile.fileaddr);
-	
-		if(access(filename,F_OK) == 0){		//存在
-			if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
-				err_sys("open error");
-			if( fstat(newfd, &buf) < 0)			
-				err_sys("fstat error");
-			offset = buf.st_size;
-			if( offset >= myfile.filesize)
-				goto end;
-			else{
-				if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
-					err_sys("write error");
-			}
-		}
-		else{
-			if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
-				err_sys("open error");
-			offset = 0;
-			if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
-				err_sys("write error");
-		}
-		leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
-	
-		while(leftbytes > 0){		//接收文件大小个字节
-			if(leftbytes > MAXLINE){
-				if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
-					err_sys("read error");
-				else if(nread == 0)
-					goto end;
-			}
-			else{
-				if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
-					err_sys("read error");
-				else if(nread == 0)
-					goto end;
-			}
-			leftbytes = leftbytes - nread;
-			if(write(newfd, recvbuf, nread) != nread)
-				err_sys("write error");
-		}
-	}
-	else{
-		if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
-			err_sys("write error 1");
-	
-		if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
-			err_sys("read error 1"); 
-		else if (n == 0)		//说明对面有该文件
-			goto end;	
-
-		if(lseek(farg->fd, offset, SEEK_SET) == -1)
-			err_sys("lseek error");
-		leftbytes = farg->myfile.filesize - offset;
-		while(leftbytes > 0){		//发送文件大小个字节
-			if(leftbytes > MAXLINE){
-				if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
-					err_sys("read error");
-			}
-			else{
-				if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
-					err_sys("read error");
-			}
-			leftbytes = leftbytes - nread;
-			if(write(connfd, sendbuf, nread) != nread)
-				goto end;	//说明对端异常关闭
-		}
-
-
-	}
-	
-
-
-end:	close(connfd);
-	if(farg->flag != 1)
-		close(newfd);
+	if(farg->flag == 1)			//文件接收端
+		sendfile(connfd, &(farg->myfile), farg->fd);		
 	else
+		recvfile(connfd, &newfd);
+	
+	close(connfd);
+	if(farg->flag == 1)
 		close(farg->fd);
+	else
+		close(newfd);
 	free(arg);
 //	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
@@ -774,13 +607,7 @@ void *thread_tcp1(void *arg)
 	struct sockaddr_in bindaddr, udpaddr, tcpaddr, peer_udpaddr, peer_tcpaddr;	//tcpaddr用来给对端连接
 	struct file_arg *farg = (struct file_arg*)arg;
 	struct file myfile;					
-	char recvbuf[MAXLINE] = {0};
-	char filename[64] = {0};
-	off_t offset;
-	off_t leftbytes;
-	ssize_t nread, n;
 	socklen_t len;
-	struct stat buf;
 	char addrstr[16] = {0};
 	pthread_detach(pthread_self());
 	bzero(&msg, sizeof(msg));
@@ -795,7 +622,7 @@ void *thread_tcp1(void *arg)
 	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
 
-	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
 		err_sys("setsockopt error");
 	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -813,16 +640,16 @@ void *thread_tcp1(void *arg)
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)		//从服务器端发回的tcp向外连接的地址
 		err_sys("read from server error");
 	printf("read from server success\n");
-	//close(conn_servsock);
+	close(conn_servsock);
 	
-	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	
 		err_sys("inet_ntop error");
-	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
+	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	
 	
 
 	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -862,10 +689,10 @@ void *thread_tcp1(void *arg)
 	if(sendmsg(sockfd, &msg, 0) < 0)
 		err_sys("sendmsg error 2");
 
-
+	//尝试借助udp p2p通信来帮助进行tcp打洞，结果证明失败
 	if( (assist_udpsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 		err_sys("create udp socket failed");
-	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -877,9 +704,9 @@ void *thread_tcp1(void *arg)
 	farg->peeraddr = peer_tcpaddr;				//在这里将收到了对端tcp地址进行赋值
 	close(udpsock);
 
-	if(inet_ntop(AF_INET, &(peer_tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+	if(inet_ntop(AF_INET, &(peer_tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	
 		err_sys("inet_ntop error");
-	printf("222222222receive message from %s: %hu \n",addrstr, ntohs(peer_tcpaddr.sin_port));	//网络字节序转成主机字节序显示
+	printf("222222222receive message from %s: %hu \n",addrstr, ntohs(peer_tcpaddr.sin_port));	
 
 
 	printf("收到了数据\n");
@@ -889,7 +716,7 @@ void *thread_tcp1(void *arg)
 	//这里其实可以直接调用thread_connect函数，但需要传递一个已经绑定好本地地址的tcp套接字
 	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
+	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -897,55 +724,9 @@ void *thread_tcp1(void *arg)
 		err_sys("bind error");
 	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		err_sys("it shouldn't");
-	if ((n = read(conn_peersock, &myfile, sizeof(struct file)))> 0){
-		printf("读成功了%ld个字节\n",n);
-		printf("fileaddr为%s\n",myfile.fileaddr);
-		printf("文件的大小为%lu\n",myfile.filesize);
-	}
-	if(strrchr(myfile.fileaddr,'/') != NULL)
-		strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
-	else
-		strcpy(filename,myfile.fileaddr);
-	if(access(filename,F_OK) == 0){		//存在
-		if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
-			err_sys("open error");
-		if( fstat(newfd, &buf) < 0)			
-			err_sys("fstat error");
-		offset = buf.st_size;
-		if( offset >= myfile.filesize)
-			goto end;
-		else{
-			if(write(conn_peersock, &offset, sizeof(off_t)) != sizeof(off_t))
-				err_sys("write error 2");
-		}
-	}
-	else{
-		if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
-			err_sys("open error");
-		offset = 0;
-		if(write(conn_peersock, &offset, sizeof(off_t)) != sizeof(off_t))
-			err_sys("write error 3");
-	}
-	leftbytes = myfile.filesize - offset;		//表明还剩多少字节没有发
 	
-	while(leftbytes > 0){		//接收文件大小个字节
-		if(leftbytes > MAXLINE){
-			if( (nread = read(conn_peersock, recvbuf, MAXLINE)) < 0)
-				err_sys("read error");
-			else if(nread == 0)
-				goto end;
-		}
-		else{
-			if( (nread = read(conn_peersock, recvbuf, leftbytes)) < 0)
-				err_sys("read error");
-			else if(nread == 0)
-				goto end;
-		}
-		leftbytes = leftbytes - nread;
-		if(write(newfd, recvbuf, nread) != nread)
-			err_sys("write error");
-	}
-end:close(conn_peersock);
+	recvfile(conn_peersock, &newfd);
+	close(conn_peersock);
 	close(newfd);
 	free(arg);
 	pthread_exit((void*)1);
@@ -957,27 +738,21 @@ void *thread_tcp2(void *arg)
 	printf("进入了tcp2\n");
 	char control[commandlen] = "tcpfile";
 	int conn_servsock, conn_peersock, listenfd, connfd, assist_udpsock;
+	int on = 1;
 	struct msghdr msg;
 	struct iovec iov[3];
 	struct sockaddr_in bindaddr, tcpaddr, peer_udpaddr, peer_tcpaddr;	//tcpaddr用来给对端连接
 	struct file_arg *farg = (struct file_arg*)arg;
 	struct file myfile;					
-	char sendbuf[MAXLINE] = {0};
-	off_t offset;
-	off_t leftbytes;
-	ssize_t nread, n;
-	int on = 1;
+	memcpy(&myfile, &(farg->myfile), sizeof(myfile));
 	socklen_t len;
 	in_port_t udp_port;
 	pthread_detach(pthread_self());
 	bzero(&msg, sizeof(msg));
-	memcpy(&myfile, &(farg->myfile), sizeof(myfile));
 	len = sizeof(bindaddr);
 	peer_tcpaddr = farg->peeraddr;
 	peer_udpaddr = myfile.addr;
 	udp_port = farg->port;
-
-
 
 
 	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
@@ -992,18 +767,16 @@ void *thread_tcp2(void *arg)
 		err_sys("getsockname failed\n");	
 	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)
 		err_sys("read from server error");
-
-	char addrstr[16] = {0};
-	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
-		err_sys("inet_ntop error");
-	printf("222222222receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	//网络字节序转成主机字节序显示
-
 	printf("read from server success\n");
-	//close(conn_servsock);
+	close(conn_servsock);
+	char addrstr[16] = {0};
+	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	
+		err_sys("inet_ntop error");
+	printf("222222222receive message from %s: %hu \n",addrstr, ntohs(tcpaddr.sin_port));	
 	
 	if( (listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -1024,7 +797,7 @@ void *thread_tcp2(void *arg)
 	
 	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
+	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -1032,16 +805,13 @@ void *thread_tcp2(void *arg)
 		err_sys("bind error");
 
 	
-	if(inet_ntop(AF_INET, &(peer_tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
+	if(inet_ntop(AF_INET, &(peer_tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	
 		err_sys("inet_ntop error");
-	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(peer_tcpaddr.sin_port));	//网络字节序转成主机字节序显示
-
-	
-	//close(conn_peersock);
+	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(peer_tcpaddr.sin_port));	
 	
 	if( (assist_udpsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 		err_sys("create udp socket failed");
-	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	if(setsockopt(assist_udpsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -1049,40 +819,20 @@ void *thread_tcp2(void *arg)
 		err_sys("bind error");
 	if(sendto(assist_udpsock, "     ", 3, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		err_sys("sendto error");
+
 	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		printf("此处connect失败是正常的\n");
+	close(conn_peersock);
 
-	if(sendmsg(sockfd, &msg, 0) < 0)		//开始监听后再发消息
+	if(sendmsg(sockfd, &msg, 0) < 0)		
 		err_sys("sendmsg error 3");
 	if( (connfd = accept(listenfd, NULL, NULL)) < 0)
 		err_sys("accept error");
 	printf("accept返回了\n");
-	if(write(connfd, &(farg->myfile), sizeof(struct file)) < 0)	//发送文件大小
-		err_sys("write error 1");
 	
-	if( (n = read(connfd, &offset, sizeof(off_t))) < 0)
-		err_sys("read error 1"); 
-	else if (n == 0)		//说明对面有该文件
-		goto end;
-	if(lseek(farg->fd, offset, SEEK_SET) == -1)
-		err_sys("lseek error");
-	leftbytes = farg->myfile.filesize - offset;
-	while(leftbytes > 0){		//发送文件大小个字节
-		if(leftbytes > MAXLINE){
-			if( (nread = read(farg->fd, sendbuf, MAXLINE)) < 0)
-				err_sys("read error");
-		}
-		else{
-			if( (nread = read(farg->fd, sendbuf, leftbytes)) < 0)
-				err_sys("read error");
-		}
-		leftbytes = leftbytes - nread;
-		if(write(connfd, sendbuf, nread) != nread)
-			goto end;	//说明对端异常关闭
-	}
+	sendfile(connfd, &(farg->myfile), farg->fd);
 
-
-end:	close(connfd);
+	close(connfd);
 	close(listenfd);
 	close(farg->fd);
 	pthread_exit((void*)1);
