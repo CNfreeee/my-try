@@ -802,7 +802,7 @@ void *thread_tcp1(void *arg)
 	
 	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
 		err_sys("connect to server error");
-	if(getsockname(listenfd, (struct sockaddr*) &bindaddr, &len) < 0)
+	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
 		err_sys("getsockname failed\n");
 	
 	if(inet_ntop(AF_INET, &(bindaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
@@ -883,11 +883,9 @@ void *thread_tcp1(void *arg)
 
 
 	printf("收到了数据\n");
-	if(sendto(assist_udpsock, " ", 0, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+	if(sendto(assist_udpsock, "     ", 3, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		err_sys("sendto error");
-	if(sendto(assist_udpsock, " ", 0, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
-		err_sys("sendto error");
-	sleep(1);
+
 	//这里其实可以直接调用thread_connect函数，但需要传递一个已经绑定好本地地址的tcp套接字
 	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
@@ -1009,7 +1007,7 @@ void *thread_tcp2(void *arg)
 		err_sys("setsockopt error");
 	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if(bind(conn_servsock, (struct sockaddr *)&bindaddr, sizeof(bindaddr)) < 0)		
+	if(bind(listenfd, (struct sockaddr *)&bindaddr, sizeof(bindaddr)) < 0)		
 		err_sys("bind error");	
 	if(listen(listenfd, 10) < 0)
 		err_sys("listen error");	
@@ -1038,8 +1036,7 @@ void *thread_tcp2(void *arg)
 		err_sys("inet_ntop error");
 	printf("11111111111receive message from %s: %hu \n",addrstr, ntohs(peer_tcpaddr.sin_port));	//网络字节序转成主机字节序显示
 
-	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
-		printf("此处connect失败是正常的\n");
+	
 	//close(conn_peersock);
 	
 	if( (assist_udpsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
@@ -1050,9 +1047,10 @@ void *thread_tcp2(void *arg)
 		err_sys("setsockopt error");
 	if(bind(assist_udpsock, (struct sockaddr *) &bindaddr, sizeof(bindaddr)) < 0)		
 		err_sys("bind error");
-	if(sendto(assist_udpsock, " ", 0, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+	if(sendto(assist_udpsock, "     ", 3, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		err_sys("sendto error");
-	
+	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+		printf("此处connect失败是正常的\n");
 
 	if(sendmsg(sockfd, &msg, 0) < 0)		//开始监听后再发消息
 		err_sys("sendmsg error 3");
