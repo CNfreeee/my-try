@@ -6,6 +6,7 @@ static struct epoll_event ev,events[servMAX_EVENTS];
 
 deque<struct job*> jobs;
 map<string,struct user> usermap;
+int filetask[128];				//当filetask[i] 不等于0时，套接字filetask[i]连接的那端传文件，i连接的那端发文件
 
 pthread_mutex_t joblock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t maplock = PTHREAD_MUTEX_INITIALIZER;
@@ -108,6 +109,7 @@ int main(int argc, char **argv)
 	ssize_t n;
 	int newfd;
 	int tempsockfd;
+	int flag;
 	len = sizeof(cliaddr);
 	for(;;){
 		if( (nfds = epoll_wait(epollfd, events, cliMAX_EVENTS, -1)) == -1){				//考虑被信号中断的情况
@@ -117,13 +119,36 @@ int main(int argc, char **argv)
 		}
 		for(m = 0; m < nfds; ++m){
 			if(events[m].data.fd == listenfd){
-				if( (newfd = accept(listenfd, (struct sockaddr*)&cliaddr, &len)) < 0)
+				if( (newfd = accept(listenfd, (struct sockaddr*)&cliaddr, &len)) < 0){
 					if(errno == EWOULDBLOCK)
 						continue;
 					else
 						err_sys("accept error");
-					write(newfd, &cliaddr, sizeof(cliaddr));			//将发起tcp连接请求的对端地址发回
-					close(newfd);
+				}									
+				if(read(newfd, &flag, sizeof(int)) < 0){	//将发起tcp连接请求的对端地址发回
+					close(newfd);						
+					continue;
+				}
+				if(flag == 1){
+					struct filepair *pair = (struct filepair*)malloc(sizeof(struct filepair));
+					pair->sendpeer = newfd;
+					printf("与发送端相连的套接字是%d\n",newfd);					
+					if(read(newfd, &pair->recvpeer, sizeof(int)) < 0){
+						close(newfd);						
+						continue;
+					}
+					printf("收到的与接收端相连的套接字是%d\n",pair->recvpeer);
+					pthread_t tid;
+					pthread_create(&tid, NULL, thread_tcp, (void*)pair);
+				}
+				else{
+					printf("与接收端相连的套接字是%d\n",newfd);
+					if(write(newfd, &newfd, sizeof(int)) != sizeof(int)){
+						close(newfd);						
+						continue;
+					}
+				}
+				
 			}
 			else if(events[m].data.fd == sockfd){
 		//		if(events[m].events & EPOLLIN){
@@ -243,7 +268,7 @@ void* thread_main(void* arg)
 	return (void*)0;
 }
 
-void* thread_detect(void* arg)
+void *thread_detect(void *arg)
 {
 	map<string,struct user>::iterator it;
 	char control[commandlen] = "quit";
@@ -272,6 +297,33 @@ void* thread_detect(void* arg)
 		pthread_mutex_unlock(&maplock);
 		sleep(10);
 	}
+	return (void*)0;
+}
+
+void *thread_tcp(void *arg)
+{
+	char buf[MAXLINE];
+	int sendpeer, recvpeer;
+	ssize_t n;
+	off_t offset;
+	struct file clifile;
+	sendpeer = ((struct filepair*)arg)->sendpeer;
+	recvpeer = ((struct filepair*)arg)->recvpeer;
+	if(read(sendpeer, &clifile, sizeof(struct file)) <= 0)	
+		goto end;
+	if(write(recvpeer, &clifile, sizeof(struct file)) != sizeof(struct file))
+		goto end;
+	if(read(recvpeer, &offset, sizeof(off_t)) <= 0)	
+		goto end;
+	if(write(sendpeer, &offset, sizeof(off_t)) != sizeof(off_t))	
+		goto end;
+	while( (n = read(sendpeer, buf ,MAXLINE)) > 0){
+		if(write(recvpeer, buf, n) != n)
+			break;
+	}
+end:	close(sendpeer);
+	close(recvpeer);
+	free(arg);
 	return (void*)0;
 }
 

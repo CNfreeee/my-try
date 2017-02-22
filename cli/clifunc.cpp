@@ -280,12 +280,13 @@ void sendfile(int connfd, struct file *myfile, int fd)
 
 }
 
-void recvfile(int connfd, int *newfd)
+void recvfile(int connfd)
 {
 	ssize_t n, nread;
 	char filename[64] = {0};
 	char recvbuf[MAXLINE] = {0};
 	off_t offset, leftbytes;
+	int newfd;
 	struct stat buf;
 	struct file myfile;
 	if ((n = read(connfd, &myfile, sizeof(struct file)))> 0){
@@ -293,24 +294,30 @@ void recvfile(int connfd, int *newfd)
 		printf("fileaddr为%s\n",myfile.fileaddr);
 		printf("文件的大小为%lu\n",myfile.filesize);
 	}
+	else if(n == 0)
+		return;
+	else
+		err_sys("read error");
 	if(strrchr(myfile.fileaddr,'/') != NULL)
 		strcpy(filename,strrchr(myfile.fileaddr,'/')+1);
 	else
 		strcpy(filename,myfile.fileaddr);
 	if(access(filename,F_OK) == 0){		//存在
-		if( (*newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
+		if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
 			err_sys("open error");
-		if( fstat(*newfd, &buf) < 0)			
+		if( fstat(newfd, &buf) < 0)			
 			err_sys("fstat error");
 		offset = buf.st_size;
-		if( offset >= myfile.filesize)
+		if( offset >= myfile.filesize){
+			close(newfd);
 			return;
+		}
 		else
 			if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
 				err_sys("write error");
 	}
 	else{
-		if( (*newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
+		if( (newfd = open(filename,O_RDWR|O_CREAT|O_TRUNC,S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH)) < 0)
 			err_sys("open error");
 		offset = 0;
 		if(write(connfd, &offset, sizeof(off_t)) != sizeof(off_t))
@@ -322,18 +329,21 @@ void recvfile(int connfd, int *newfd)
 		if(leftbytes > MAXLINE){
 			if( (nread = read(connfd, recvbuf, MAXLINE)) < 0)
 				err_sys("read error");
-			else if(nread == 0)
+			else if(nread == 0){
+				close(newfd);				
 				return;
-			
+			}
 		}
 		else{
 			if( (nread = read(connfd, recvbuf, leftbytes)) < 0)
 				err_sys("read error");
-			else if(nread == 0)
+			else if(nread == 0){
+				close(newfd);
 				return;
+			}
 		}
 		leftbytes = leftbytes - nread;
-		if(write(*newfd, recvbuf, nread) != nread)
+		if(write(newfd, recvbuf, nread) != nread)
 			err_sys("write error");
 	}
 

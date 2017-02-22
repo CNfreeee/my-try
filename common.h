@@ -6,7 +6,7 @@
 //#define UDPMAXLINE      4096	//先设一个较大值，之后再考虑udp数据报分片的问题
 #define cliMAX_EVENTS	10
 #define servMAX_EVENTS  1000
-#define threadsnum 3
+#define threadsnum 2
 #define namelen 12
 #define commandlen 12
 #define PORT 9877
@@ -40,7 +40,7 @@ struct file{
 struct file_arg{
 	int flag;		//1代表文件发送方，2代表文件接收方
 	int listenfd;
-	int fd;			//同file中的fd
+	int fd;			//在tcp打洞中同file中的fd，在借助服务器转发时表示服务器端的已连接tcp套接字
 	in_port_t port;		//tcp打洞中用
 	//char name[namelen];
 	struct sockaddr_in peeraddr;	//tcp地址

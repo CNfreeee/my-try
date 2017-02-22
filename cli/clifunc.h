@@ -22,15 +22,17 @@ void add_user();
 void show_users();
 void alarm_handler(int);
 void interrupt_handler(int);
-void *thread_heart(void*);
-void *thread_listen(void*);
-void *thread_connect(void*);
-void *thread_tcp1(void*);
-void *thread_tcp2(void*);
-void listen_cleanup(void*);
-void connect_cleanup(void*);
+void *thread_heart(void *);
+void *thread_listen(void *);
+void *thread_connect(void *);
+void *thread_tcp1(void *);
+void *thread_tcp2(void *);
+void *thread_tcp3(void *);
+void *thread_tcp4(void *);
+void listen_cleanup(void *);
+void connect_cleanup(void *);
 void sendfile(int, struct file *, int);
-void recvfile(int, int *);
+void recvfile(int);
 
 
 extern int sockfd;

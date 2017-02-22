@@ -282,8 +282,8 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		struct sockaddr_in peeraddr;
 		char reply[12] ={0};
 		memcpy(&peerfile, recvline, sizeof(peerfile));
-		if(strcmp(peerfile.fileowner,name) == 0 ){			//此情况说明自己是文件传输的发起方，并且两方都无法被连接，此时需要进行tcp打洞
-			in_port_t udp_port;								//发回给对端
+		if(strcmp(peerfile.fileowner,name) == 0 ){		//此情况说明自己是文件传输的发起方，并且两方都无法被连接，此时需要进行tcp打洞
+			/*in_port_t udp_port;								//发回给对端
 			struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));		
 			memcpy(&peeraddr,recvline+sizeof(peerfile),sizeof(peeraddr));
 			memcpy(&udp_port,recvline+sizeof(peerfile)+sizeof(peeraddr),sizeof(in_port_t));
@@ -293,7 +293,7 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 			my_arg->port = udp_port;
 			memcpy(&(my_arg->myfile), &peerfile, sizeof(peerfile));
 			pthread_t ptid;
-			pthread_create(&ptid, NULL, thread_tcp2, (void*)my_arg);
+			pthread_create(&ptid, NULL, thread_tcp2, (void*)my_arg);*/	//路由器收到陌生请求会发回RST包，导致tcp打洞失败
 		
 		}
 		else {
@@ -346,13 +346,18 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 
 				}
 				else{						//本端处于另一个局域网
-					struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+					/*struct file_arg *my_arg = (struct file_arg *)malloc(sizeof(struct file_arg));
 					memcpy(&(my_arg->myfile), &peerfile, sizeof(peerfile));
 					my_arg->peeraddr = peerfile.addr;
 					my_arg->flag = 2;
 					pthread_t ptid;
-					pthread_create(&ptid, NULL, thread_tcp1, (void*)my_arg);
-
+					pthread_create(&ptid, NULL, thread_tcp1, (void*)my_arg);*/
+					
+					struct file_arg *my_arg = (struct file_arg *)malloc(sizeof(struct file_arg));
+					memcpy(&(my_arg->myfile), &peerfile, sizeof(peerfile));
+					my_arg->peeraddr = peeraddr;
+					pthread_t ptid;
+					pthread_create(&ptid, NULL, thread_tcp3, (void*)my_arg);
 				}
 			}
 			else{					//倘若拒绝接收
@@ -452,7 +457,7 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		printf("已经打开的文件描述符是%d\n",fd);
 		close(fd);
 	}
-	else if(strcmp(control,"tcpfile") == 0){
+	/*else if(strcmp(control,"holefile") == 0){
 		struct sockaddr_in peer_tcpaddr, udpaddr;
 		in_port_t port;
 		printf("收到的端口本地端口号是%d\n",port);
@@ -465,6 +470,15 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 			err_sys("inet_pton error");
 		if(sendto(sockfd, &peer_tcpaddr, sizeof(peer_tcpaddr), 0, (struct sockaddr*)&udpaddr, sizeof(udpaddr)) < 0)
 			err_sys("sendto error");
+	}*/
+	else if(strcmp(control,"tcpfile") == 0){
+		int recvfd;
+		struct file_arg *my_arg = (struct file_arg *)malloc(sizeof(struct file_arg));
+		memcpy(&my_arg->myfile, recvline, sizeof(struct file));
+		memcpy(&recvfd, recvline+sizeof(struct file), sizeof(int));
+		my_arg->fd = recvfd;
+		pthread_t ptid;
+		pthread_create(&ptid, NULL, thread_tcp4, (void*)my_arg);
 	}
 	else if(strcmp(control,"offline") == 0)
 		exit(2);
@@ -546,7 +560,7 @@ void interrupt_handler(int signo)
 
 void *thread_listen(void *arg)
 {
-	int connfd, newfd;
+	int connfd;
 	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
 	pthread_cleanup_push(listen_cleanup, arg);
@@ -557,18 +571,16 @@ void *thread_listen(void *arg)
 	if(farg->flag == 1)					//文件发送端
 		sendfile(connfd, &(farg->myfile), farg->fd);
 	else
-		recvfile(connfd, &newfd);
+		recvfile(connfd);
 
 	close(connfd);
-	if(farg->flag != 1)
-		close(newfd);
 	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 }
 
 void *thread_connect(void *arg)
 {
-	int connfd, newfd;
+	int connfd;
 	struct file_arg *farg = (struct file_arg*)arg;
 	pthread_detach(pthread_self());
 	//pthread_cleanup_push(connect_cleanup, arg);
@@ -582,24 +594,23 @@ void *thread_connect(void *arg)
 	if(farg->flag == 1)			//文件接收端
 		sendfile(connfd, &(farg->myfile), farg->fd);		
 	else
-		recvfile(connfd, &newfd);
+		recvfile(connfd);
 	
 	close(connfd);
 	if(farg->flag == 1)
 		close(farg->fd);
-	else
-		close(newfd);
 	free(arg);
 //	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 	
 }
 
+/*接收端tcp线程*/
 void *thread_tcp1(void *arg)
 {
 	printf("进入了tcp1\n");
-	int conn_servsock,conn_peersock, udpsock, listenfd;						//udpsock用来接收主线程传过来的数据
-	int on = 1, newfd, assist_udpsock;
+	int conn2servsock,conn2peersock, udpsock, listenfd;						//udpsock用来接收主线程传过来的数据
+	int on = 1, assist_udpsock;
 	in_port_t udp_port;
 	char control[commandlen] = "file";
 	struct msghdr msg;
@@ -619,17 +630,17 @@ void *thread_tcp1(void *arg)
 	
 
 	
-	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	if( (conn2servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
 
-	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
+	if(setsockopt(conn2servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项,就算在time_wait状态地址也可以被绑定
 		err_sys("setsockopt error");
-	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+	if(setsockopt(conn2servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
 	
-	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+	if( connect(conn2servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
 		err_sys("connect to server error");
-	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
+	if(getsockname(conn2servsock, (struct sockaddr*) &bindaddr, &len) < 0)
 		err_sys("getsockname failed\n");
 	
 	if(inet_ntop(AF_INET, &(bindaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
@@ -637,10 +648,10 @@ void *thread_tcp1(void *arg)
 	printf("333333receive message from %s: %hu \n",addrstr, ntohs(bindaddr.sin_port));	//网络字节序转成主机字节序显示
 
 	
-	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)		//从服务器端发回的tcp向外连接的地址
+	if(read(conn2servsock, &tcpaddr, sizeof(tcpaddr)) < 0)		//从服务器端发回的tcp向外连接的地址
 		err_sys("read from server error");
 	printf("read from server success\n");
-	close(conn_servsock);
+	close(conn2servsock);
 	
 	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	
 		err_sys("inet_ntop error");
@@ -714,37 +725,37 @@ void *thread_tcp1(void *arg)
 		err_sys("sendto error");
 
 	//这里其实可以直接调用thread_connect函数，但需要传递一个已经绑定好本地地址的tcp套接字
-	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	if( (conn2peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
+	if(setsockopt(conn2peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+	if(setsockopt(conn2peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if( bind(conn_peersock,(struct sockaddr*)&bindaddr, sizeof(bindaddr)) < 0)
+	if( bind(conn2peersock,(struct sockaddr*)&bindaddr, sizeof(bindaddr)) < 0)
 		err_sys("bind error");
-	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+	if( connect(conn2peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		err_sys("it shouldn't");
 	
-	recvfile(conn_peersock, &newfd);
-	close(conn_peersock);
-	close(newfd);
+	recvfile(conn2peersock);
+	close(conn2peersock);
 	free(arg);
 	pthread_exit((void*)1);
 }
 
 
+/*发送端tcp线程*/
 void *thread_tcp2(void *arg)
 {
 	printf("进入了tcp2\n");
-	char control[commandlen] = "tcpfile";
-	int conn_servsock, conn_peersock, listenfd, connfd, assist_udpsock;
+	char control[commandlen] = "holefile";
+	int conn2servsock, conn2peersock, listenfd, connfd, assist_udpsock;
 	int on = 1;
 	struct msghdr msg;
 	struct iovec iov[3];
 	struct sockaddr_in bindaddr, tcpaddr, peer_udpaddr, peer_tcpaddr;	//tcpaddr用来给对端连接
 	struct file_arg *farg = (struct file_arg*)arg;
 	struct file myfile;					
-	memcpy(&myfile, &(farg->myfile), sizeof(myfile));
+	memcpy(&myfile, &farg->myfile, sizeof(myfile));
 	socklen_t len;
 	in_port_t udp_port;
 	pthread_detach(pthread_self());
@@ -755,20 +766,20 @@ void *thread_tcp2(void *arg)
 	udp_port = farg->port;
 
 
-	if( (conn_servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	if( (conn2servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
+	if(setsockopt(conn2servsock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if(setsockopt(conn_servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+	if(setsockopt(conn2servsock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if( connect(conn_servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+	if( connect(conn2servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
 		err_sys("connect to server error");
-	if(getsockname(conn_servsock, (struct sockaddr*) &bindaddr, &len) < 0)
+	if(getsockname(conn2servsock, (struct sockaddr*) &bindaddr, &len) < 0)
 		err_sys("getsockname failed\n");	
-	if(read(conn_servsock, &tcpaddr, sizeof(tcpaddr)) < 0)
+	if(read(conn2servsock, &tcpaddr, sizeof(tcpaddr)) < 0)
 		err_sys("read from server error");
 	printf("read from server success\n");
-	close(conn_servsock);
+	close(conn2servsock);
 	char addrstr[16] = {0};
 	if(inet_ntop(AF_INET, &(tcpaddr.sin_addr),addrstr,sizeof(addrstr)) == NULL)	
 		err_sys("inet_ntop error");
@@ -795,13 +806,13 @@ void *thread_tcp2(void *arg)
 	iov[2].iov_len = sizeof(in_port_t);
 	msg.msg_name = (struct sockaddr*)&peer_udpaddr;
 	
-	if( (conn_peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+	if( (conn2peersock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		err_sys("create tcp socket failed");
-	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
+	if(setsockopt(conn2peersock,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if(setsockopt(conn_peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
+	if(setsockopt(conn2peersock,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if( bind(conn_peersock,(struct sockaddr*)&bindaddr, sizeof(bindaddr)) < 0)
+	if( bind(conn2peersock,(struct sockaddr*)&bindaddr, sizeof(bindaddr)) < 0)
 		err_sys("bind error");
 
 	
@@ -820,12 +831,12 @@ void *thread_tcp2(void *arg)
 	if(sendto(assist_udpsock, "     ", 3, 0, (struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		err_sys("sendto error");
 
-	if( connect(conn_peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
+	if( connect(conn2peersock,(struct sockaddr*)&peer_tcpaddr, sizeof(peer_tcpaddr)) < 0)
 		printf("此处connect失败是正常的\n");
-	close(conn_peersock);
+	close(conn2peersock);
 
 	if(sendmsg(sockfd, &msg, 0) < 0)		
-		err_sys("sendmsg error 3");
+		err_sys("sendmsg error 2");
 	if( (connfd = accept(listenfd, NULL, NULL)) < 0)
 		err_sys("accept error");
 	printf("accept返回了\n");
@@ -838,6 +849,69 @@ void *thread_tcp2(void *arg)
 	pthread_exit((void*)1);
 }
 
+
+void *thread_tcp3(void *arg)
+{
+	printf("进入了tcp3\n");
+	int conn2servsock;
+	int flag = 2;			//表示接收端
+	int serv_fd = -1;			//服务器那端与自己相连的套接字
+	char control[commandlen] = "tcpfile";
+	struct msghdr msg;
+	struct iovec iov[3];
+	struct file_arg *farg = (struct file_arg*)arg;
+	struct file myfile;	
+	bzero(&msg, sizeof(msg));
+	memcpy(&myfile, &farg->myfile, sizeof(myfile));
+	msg.msg_namelen = sizeof(struct sockaddr_in);	
+	msg.msg_iov = iov;
+	msg.msg_iovlen = 3;
+	iov[0].iov_base = control;
+	iov[0].iov_len = commandlen;
+	iov[1].iov_base = &myfile;
+	iov[1].iov_len = sizeof(myfile);
+	iov[2].iov_base = &serv_fd;
+	iov[2].iov_len = sizeof(int);
+	msg.msg_name = (struct sockaddr*)&farg->peeraddr;
+	if( (conn2servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if( connect(conn2servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+		err_sys("connect to server error");
+	if(write(conn2servsock, &flag, sizeof(int)) != sizeof(int))
+		err_sys("write error\n");
+	if(read(conn2servsock, &serv_fd, sizeof(int)) < 0)
+		err_sys("read error");
+	if(sendmsg(sockfd, &msg, 0) < 0)		
+		err_sys("sendmsg error 3");
+	recvfile(conn2servsock);
+	close(conn2servsock);
+	free(arg);
+	pthread_exit((void*)1);
+}
+
+void *thread_tcp4(void *arg)
+{
+	printf("进入了tcp4\n");
+	int conn2servsock;
+	int flag = 1;			//表示发送端
+	int recv_fd;
+	struct file_arg *farg = (struct file_arg*)arg;
+	struct file myfile;
+	memcpy(&myfile, &farg->myfile, sizeof(myfile));	
+	recv_fd = farg->fd;
+	if( (conn2servsock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		err_sys("create tcp socket failed");
+	if( connect(conn2servsock, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0)
+		err_sys("connect to server error");
+	if(write(conn2servsock, &flag, sizeof(int)) != sizeof(int))
+		err_sys("write error\n");
+	if(write(conn2servsock, &recv_fd, sizeof(int)) != sizeof(int))
+		err_sys("write error\n");
+	sendfile(conn2servsock, &myfile, recv_fd);
+	close(conn2servsock);
+	free(arg);
+	pthread_exit((void*)1);
+}
 
 void listen_cleanup(void *arg)
 {
