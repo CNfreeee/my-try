@@ -120,7 +120,7 @@ int main(int argc, char **argv)
 		for(m = 0; m < nfds; ++m){
 			if(events[m].data.fd == listenfd){
 				if( (newfd = accept(listenfd, (struct sockaddr*)&cliaddr, &len)) < 0){
-					if(errno == EWOULDBLOCK)
+					if(errno == EWOULDBLOCK)		//listenfd是非阻塞的
 						continue;
 					else
 						err_sys("accept error");

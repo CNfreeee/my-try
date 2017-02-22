@@ -907,7 +907,7 @@ void *thread_tcp4(void *arg)
 		err_sys("write error\n");
 	if(write(conn2servsock, &recv_fd, sizeof(int)) != sizeof(int))
 		err_sys("write error\n");
-	sendfile(conn2servsock, &myfile, recv_fd);
+	sendfile(conn2servsock, &myfile, myfile.fd);
 	close(conn2servsock);
 	free(arg);
 	pthread_exit((void*)1);
