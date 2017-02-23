@@ -86,7 +86,7 @@ int parseInput(char *input, char control[], size_t control_size, char *rest_inpu
 	char *pos = NULL;
 	int i;
 	if((pos = strchr(input,' ')) != NULL){	
-		if((pos-input) > (control_size - 1))
+		if((pos-input) > (int)(control_size - 1))
 			return -1;
 		for(i = 0; input[i]!= ' '; ++i){
 			control[i] = input[i];

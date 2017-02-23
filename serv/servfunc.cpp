@@ -59,7 +59,7 @@ void send_usermap(const int fd, char* control)
 	struct msghdr msgsend;
 	bzero(&msgsend, sizeof(msgsend));
 	struct iovec* iovsend = (struct iovec*)malloc((num+1) * sizeof(struct iovec));
-	if(iovsend = NULL)
+	if(iovsend == NULL)
 		err_sys("malloc error");
 	bzero(iovsend, (num+1) * sizeof(struct iovec));
 	msgsend.msg_iov = iovsend;

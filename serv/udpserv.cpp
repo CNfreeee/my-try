@@ -180,18 +180,18 @@ int main(int argc, char **argv)
 					if( connect(newfd, (struct sockaddr *) &cliaddr, sizeof(cliaddr)) < 0)		
 							err_sys("connect error");
 					
-					struct job* newjob = (struct job*)malloc(sizeof(struct job));	//将此请求加入任务队列
-					if(newjob == NULL)
+					struct job* p_newjob = (struct job*)malloc(sizeof(struct job));	//将此请求加入任务队列
+					if(p_newjob == NULL)
 						err_sys("malloc error");			
-					bzero(newjob,sizeof(struct job));
-					strcpy(newjob->control,(char*)iovrecv[0].iov_base);
-					newjob->fd = newfd;
-					strcpy(newjob->peer_name,(char*) iovrecv[1].iov_base);
-					newjob->peeraddr = cliaddr;					//保存的是网络字节序地址	
-					newjob->peerlocaladdr = peerlocaladdr;
+					bzero(p_newjob,sizeof(struct job));
+					strcpy(p_newjob->control,(char*)iovrecv[0].iov_base);
+					p_newjob->fd = newfd;
+					strcpy(p_newjob->peer_name,(char*) iovrecv[1].iov_base);
+					p_newjob->peeraddr = cliaddr;					//保存的是网络字节序地址	
+					p_newjob->peerlocaladdr = peerlocaladdr;
 					if(pthread_mutex_lock(&joblock) != 0)
 						err_sys("job lock failed\n");
-					jobs.push_back(newjob);
+					jobs.push_back(p_newjob);
 					if(pthread_mutex_unlock(&joblock) != 0)
 						err_sys("job unlock failed\n");
 					if(pthread_cond_signal(&condready) != 0)
@@ -226,20 +226,20 @@ int main(int argc, char **argv)
 					printf("connect sockid is %d\n",tempsockfd);
 					printf("receive control message is **%s**\n", (char*)iovrecv[0].iov_base);
 					
-					struct job* newjob = (struct job*)malloc(sizeof(struct job));
-					if(newjob == NULL)
+					struct job* p_newjob = (struct job*)malloc(sizeof(struct job));
+					if(p_newjob == NULL)
 						err_sys("malloc error");
-					bzero(newjob,sizeof(struct job));
-					strcpy(newjob->control,(char*)iovrecv[0].iov_base);
-					newjob->fd = tempsockfd;
+					bzero(p_newjob,sizeof(struct job));
+					strcpy(p_newjob->control,(char*)iovrecv[0].iov_base);
+					p_newjob->fd = tempsockfd;
 					pthread_mutex_lock(&joblock);
 					//要根据发送的用户名来更新在线用户列表
 					if(strcmp(command,"quit") == 0){			
-						strcpy(newjob->peer_name,(char*) iovrecv[1].iov_base);
-						jobs.push_front(newjob);			//此消息比较重要，放在工作队列队首
+						strcpy(p_newjob->peer_name,(char*) iovrecv[1].iov_base);
+						jobs.push_front(p_newjob);			//此消息比较重要，放在工作队列队首
 					}
 					else
-						jobs.push_back(newjob);
+						jobs.push_back(p_newjob);
 					pthread_mutex_unlock(&joblock);
 					pthread_cond_signal(&condready);		
 
@@ -288,13 +288,13 @@ void *thread_detect(void *arg)
 			if(it->second.count > 0)
 				it->second.count = 0;
 			else{
-				struct job* newjob = (struct job*)malloc(sizeof(struct job));						
-				bzero(newjob,sizeof(struct job));
-				strcpy(newjob->control,control);
-				newjob->fd = it->second.bind_fd;
-				strcpy(newjob->peer_name,it->second.name);
+				struct job* p_newjob = (struct job*)malloc(sizeof(struct job));						
+				bzero(p_newjob,sizeof(struct job));
+				strcpy(p_newjob->control,control);
+				p_newjob->fd = it->second.bind_fd;
+				strcpy(p_newjob->peer_name,it->second.name);
 				pthread_mutex_lock(&joblock);
-				jobs.push_front(newjob);
+				jobs.push_front(p_newjob);
 				pthread_mutex_unlock(&joblock);
 				pthread_cond_signal(&condready);
 			}		
