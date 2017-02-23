@@ -212,7 +212,9 @@ void file_request(char* control, size_t len1, char* mes, size_t len2)
 	peeraddr = it->second.addr;
 	if(outeraddr.sin_addr.s_addr == peeraddr.sin_addr.s_addr || outeraddr.sin_addr.s_addr == localaddr.sin_addr.s_addr){	
 		//发送端和本机处于同一局域网或发送端处于公网,此情况会直接开始监听，并将监听端口发送到对端
-		struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));		
+		struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+		if(my_arg == NULL)
+			err_sys("malloc error");		
 		int listenfd;
 		char str[6] = {0};
 		struct sockaddr_in bindaddr;
@@ -309,7 +311,9 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 			peeraddr = peerfile.addr;
 			if(strcmp(reply, "yes") == 0){				
 				if(outeraddr.sin_addr.s_addr == localaddr.sin_addr.s_addr){				//本端处于公网
-					struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));		
+					struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+					if(my_arg == NULL)
+						err_sys("malloc error");		
 					int listenfd;
 					char str[6] = {0};
 					struct sockaddr_in bindaddr;
@@ -384,6 +388,8 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 		listenaddr = peerfile.addr;
 		if(strcmp(peerfile.fileowner,name) == 0 ){			//此情况说明自己是文件传输的发起方，并且对端可以被连接
 				struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+				if(my_arg == NULL)
+					err_sys("malloc error");
 				memcpy(&(my_arg->myfile), &peerfile, sizeof(peerfile));
 				my_arg->flag = 1;
 				my_arg->fd = peerfile.fd;
@@ -400,6 +406,8 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 			reply[strlen(reply)-1] = '\0';
 			if(strcmp(reply, "yes") == 0){
 				struct file_arg *my_arg = (struct file_arg*)malloc(sizeof(struct file_arg));
+				if(my_arg == NULL)
+					err_sys("malloc error");
 				my_arg->flag = 2;
 				memcpy(str, control+4, strlen(control+4));
 				port = atoi(str);
@@ -474,6 +482,8 @@ void parseRecv(ssize_t n, char *control, char *recvline)
 	else if(strcmp(control,"tcpfile") == 0){
 		int recvfd;
 		struct file_arg *my_arg = (struct file_arg *)malloc(sizeof(struct file_arg));
+		if(my_arg == NULL)
+			err_sys("malloc error");
 		memcpy(&my_arg->myfile, recvline, sizeof(struct file));
 		memcpy(&recvfd, recvline+sizeof(struct file), sizeof(int));
 		my_arg->fd = recvfd;
@@ -600,6 +610,7 @@ void *thread_connect(void *arg)
 	if(farg->flag == 1)
 		close(farg->fd);
 	free(arg);
+	arg = NULL;
 //	pthread_cleanup_pop(1);
 	pthread_exit((void*)1);
 	
@@ -739,6 +750,7 @@ void *thread_tcp1(void *arg)
 	recvfile(conn2peersock);
 	close(conn2peersock);
 	free(arg);
+	arg = NULL;
 	pthread_exit((void*)1);
 }
 
@@ -886,6 +898,7 @@ void *thread_tcp3(void *arg)
 	recvfile(conn2servsock);
 	close(conn2servsock);
 	free(arg);
+	arg = NULL;
 	pthread_exit((void*)1);
 }
 
@@ -910,6 +923,7 @@ void *thread_tcp4(void *arg)
 	sendfile(conn2servsock, &myfile, myfile.fd);
 	close(conn2servsock);
 	free(arg);
+	arg = NULL;
 	pthread_exit((void*)1);
 }
 
@@ -920,6 +934,7 @@ void listen_cleanup(void *arg)
 	if(((struct file_arg*)arg)->flag == 1)
 		close(((struct file_arg*)arg)->fd);
 	free(arg);
+	arg = NULL;
 	return;
 }
 

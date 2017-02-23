@@ -59,6 +59,8 @@ void send_usermap(const int fd, char* control)
 	struct msghdr msgsend;
 	bzero(&msgsend, sizeof(msgsend));
 	struct iovec* iovsend = (struct iovec*)malloc((num+1) * sizeof(struct iovec));
+	if(iovsend = NULL)
+		err_sys("malloc error");
 	bzero(iovsend, (num+1) * sizeof(struct iovec));
 	msgsend.msg_iov = iovsend;
 	msgsend.msg_iovlen = num + 1;
@@ -80,7 +82,8 @@ void send_usermap(const int fd, char* control)
 	if(sendmsg(fd, &msgsend, 0) < 0)
 		err_sys("sendmsg error\n");
 	printf("******************\n");
-	free(iovsend);	
+	free(iovsend);
+	iovsend = NULL;
 	if(pthread_mutex_unlock(&maplock) != 0)
 		err_sys("map unlock failed");
 	return;

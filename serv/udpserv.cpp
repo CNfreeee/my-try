@@ -6,7 +6,7 @@ static struct epoll_event ev,events[servMAX_EVENTS];
 
 deque<struct job*> jobs;
 map<string,struct user> usermap;
-int filetask[128];				//当filetask[i] 不等于0时，套接字filetask[i]连接的那端传文件，i连接的那端发文件
+
 
 pthread_mutex_t joblock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t maplock = PTHREAD_MUTEX_INITIALIZER;
@@ -69,7 +69,7 @@ int main(int argc, char **argv)
 		err_sys("setsockopt error");
 	if(setsockopt(sockfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
-	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)	//设置重复绑定选项
+	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&on,sizeof(on)) < 0)
 		err_sys("setsockopt error");
 	if(setsockopt(listenfd,SOL_SOCKET,SO_REUSEPORT,&on,sizeof(on)) < 0)	
 		err_sys("setsockopt error");
@@ -96,7 +96,7 @@ int main(int argc, char **argv)
 	if(epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &ev) == -1)
 		err_sys("epoll_ctl error");
 	
-//	pthread_t *pth = (pthread_t*)malloc((threadsnum+1) * sizeof(pthread_t));
+
 	pthread_t pth[threadsnum+1];
 	for(i = 0; i < threadsnum; ++i){									//创建线程池
 		if(pthread_create(&pth[i], NULL, &thread_main, NULL)!= 0)
@@ -131,18 +131,17 @@ int main(int argc, char **argv)
 				}
 				if(flag == 1){
 					struct filepair *pair = (struct filepair*)malloc(sizeof(struct filepair));
-					pair->sendpeer = newfd;
-					printf("与发送端相连的套接字是%d\n",newfd);					
+					if(pair == NULL)
+						err_sys("malloc error");
+					pair->sendpeer = newfd;					
 					if(read(newfd, &pair->recvpeer, sizeof(int)) < 0){
 						close(newfd);						
 						continue;
 					}
-					printf("收到的与接收端相连的套接字是%d\n",pair->recvpeer);
 					pthread_t tid;
 					pthread_create(&tid, NULL, thread_tcp, (void*)pair);
 				}
 				else{
-					printf("与接收端相连的套接字是%d\n",newfd);
 					if(write(newfd, &newfd, sizeof(int)) != sizeof(int)){
 						close(newfd);						
 						continue;
@@ -181,7 +180,9 @@ int main(int argc, char **argv)
 					if( connect(newfd, (struct sockaddr *) &cliaddr, sizeof(cliaddr)) < 0)		
 							err_sys("connect error");
 					
-					struct job* newjob = (struct job*)malloc(sizeof(struct job));		//将此请求加入任务队列					
+					struct job* newjob = (struct job*)malloc(sizeof(struct job));	//将此请求加入任务队列
+					if(newjob == NULL)
+						err_sys("malloc error");			
 					bzero(newjob,sizeof(struct job));
 					strcpy(newjob->control,(char*)iovrecv[0].iov_base);
 					newjob->fd = newfd;
@@ -222,10 +223,12 @@ int main(int argc, char **argv)
 					if(inet_ntop(AF_INET, &cliaddr.sin_addr,addrstr,sizeof(addrstr)) == NULL)	//获取客户端的地址
 						err_sys("inet_ntop error");
 					printf("receive message from %s: %hu \n",addrstr, ntohs(cliaddr.sin_port));	//网络字节序要转成主机字节
-					printf("sockid is %d\n",tempsockfd);
+					printf("connect sockid is %d\n",tempsockfd);
 					printf("receive control message is **%s**\n", (char*)iovrecv[0].iov_base);
 					
-					struct job* newjob = (struct job*)malloc(sizeof(struct job));	
+					struct job* newjob = (struct job*)malloc(sizeof(struct job));
+					if(newjob == NULL)
+						err_sys("malloc error");
 					bzero(newjob,sizeof(struct job));
 					strcpy(newjob->control,(char*)iovrecv[0].iov_base);
 					newjob->fd = tempsockfd;
@@ -264,6 +267,7 @@ void* thread_main(void* arg)
 			err_sys("job unlock failed\n");
 		do_job(currentjob);
 		free(currentjob);
+		currentjob = NULL;
 	}
 	return (void*)0;
 }
@@ -275,9 +279,11 @@ void *thread_detect(void *arg)
 	sleep(10);
 	for(;;){
 		pthread_mutex_lock(&maplock);
-		if(usermap.size() == 0)			
-			goto skip;
-		
+		if(usermap.size() == 0){		
+			pthread_mutex_unlock(&maplock);
+			sleep(10);
+			continue;
+		}
 		for(it = usermap.begin(); it != usermap.end(); ++it){
 			if(it->second.count > 0)
 				it->second.count = 0;
@@ -293,7 +299,7 @@ void *thread_detect(void *arg)
 				pthread_cond_signal(&condready);
 			}		
 		}
-	skip:	
+		
 		pthread_mutex_unlock(&maplock);
 		sleep(10);
 	}
@@ -324,6 +330,7 @@ void *thread_tcp(void *arg)
 end:	close(sendpeer);
 	close(recvpeer);
 	free(arg);
+	arg = NULL;
 	return (void*)0;
 }
 
