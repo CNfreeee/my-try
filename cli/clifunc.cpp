@@ -303,7 +303,7 @@ void recvfile(int connfd)
 	else
 		strcpy(filename,myfile.fileaddr);
 	if(access(filename,F_OK) == 0){		//存在
-		if( (newfd = open(filename, O_WRONLY|O_APPEND)) < 0)	//打开想要传输的文件
+		if( (newfd = open(filename, O_WRONLY)) < 0)	//打开想要传输的文件
 			err_sys("open error");
 		if( fstat(newfd, &buf) < 0)			
 			err_sys("fstat error");
